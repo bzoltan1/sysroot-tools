@@ -1,0 +1,1624 @@
+#!/usr/bin/env python2
+# -*- coding: utf-8 -*-
+# Copyright 2017 Zoltán Balogh.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU Lesser General Public License as published by
+# the Free Software Foundation; version 2.1.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Lesser General Public License for more details.
+#
+# You should have received a copy of the GNU Lesser General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+# Author: Zoltán Balogh <zoltan@bakter.hu>
+
+import urllib2
+from ssl import create_default_context
+from ssl import Purpose
+from urlparse import urlparse
+import subprocess
+import os
+import tempfile
+import sys
+import re
+import errno
+from shutil import copy
+from shutil import rmtree
+from shutil import copytree
+from shutil import move
+from os.path import isdir
+from os.path import isfile
+from os.path import dirname
+from os.path import abspath
+from os.path import ismount
+from os.path import exists
+from os.path import basename
+from os import chown
+import json
+import argparse
+from argparse import RawTextHelpFormatter
+import string
+import hashlib
+from time import gmtime, strftime
+import time
+import getpass
+import signal
+import pwd
+import grp
+from multiprocessing import cpu_count
+
+
+class bcolors:
+    HEADER = '\033[95m'
+    OKBLUE = '\033[94m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+
+    def disable(self):
+        self.HEADER = ''
+        self.OKBLUE = ''
+        self.OKGREEN = ''
+        self.WARNING = ''
+        self.FAIL = ''
+        self.ENDC = ''
+
+
+class keyboard_interrupt_class(object):
+    def disable(self):
+        self.signal_received = False
+        self.old_handler = signal.getsignal(signal.SIGINT)
+        signal.signal(signal.SIGINT, self.handler)
+
+    def handler(self, sig, frame):
+        self.signal_received = (sig, frame)
+        umount_and_exit(1)
+
+    def enable(self, type, value, traceback):
+        signal.signal(signal.SIGINT, self.old_handler)
+        if self.signal_received:
+            self.old_handler(*self.signal_received)
+
+
+def log_text(text):
+    if consol_log:
+        sys.stdout.write("%s\r" % text)
+        sys.stdout.flush()
+        sys.stdout.write("\033[K")  # Clear to the end of line
+    else:
+        print(text)
+
+
+def find_file(path, specfile):
+    if isdir(path):
+        for file in os.listdir(path):
+            if file.endswith(specfile):
+                return True, abspath("%s/%s" % (path, file))
+    return False, ""
+
+
+def umount_and_exit(return_value):
+    # Starting with umounting the system directories
+    if sysroot_directory:
+        mounted, umount_error = umount_system_dir(sysroot_directory)
+        if not mounted:
+            print("Could not umount system directories" +
+                  bcolors.FAIL + " %s" % umount_error + bcolors.ENDC)
+        print("The sysroot is decoupled and left at" + bcolors.FAIL +
+              " %s" % sysroot_directory +
+              bcolors.ENDC)
+    sys.exit(return_value)
+
+
+def setup_authentication(url, username, password, ssl_certificate):
+    passman = urllib2.HTTPPasswordMgrWithDefaultRealm()
+    passman.add_password(realm=None, uri=url, user=username, passwd=password)
+    authhandler = urllib2.HTTPBasicAuthHandler(passman)
+    context = None
+    if ssl_certificate:
+        try:
+            context = create_default_context(purpose=Purpose.SERVER_AUTH,
+                                             cafile=ssl_certificate,
+                                             capath=None)
+        except:
+            print("Could not create default SSL context with " +
+                  bcolors.FAIL +
+                  "%s" % ssl_certificate +
+                  bcolors.ENDC)
+            return False
+    https_handler = urllib2.HTTPSHandler(context=context)
+    opener = urllib2.build_opener(https_handler, authhandler)
+    urllib2.install_opener(opener)
+    return True
+
+
+def build_project(project_dir, build_directory, arch, sysroot_directory):
+    if not isdir(build_directory):
+        try:
+            os.makedirs(build_directory)
+            uid = pwd.getpwnam("%s" % os.environ['SUDO_USER']).pw_uid
+            gid = grp.getgrnam("%s" % os.environ['SUDO_USER']).gr_gid
+            chown(dirname(dirname(build_directory)), uid, gid)
+            chown(dirname(build_directory), uid, gid)
+            chown(build_directory, uid, gid)
+        except OSError as exc:
+            if exc.errno == errno.EEXIST and isdir(build_directory):
+                pass
+            else:
+                raise
+    if not isdir("%s" % project_dir):
+        return False, "Project %s does not exist." % project_dir
+    spec_file = ""
+    found_specfile, spec_filename = find_file(project_dir, ".spec")
+    if not found_specfile:
+        found_specfile, spec_filename = find_file("%s/skytree" % project_dir,
+                                                  ".spec")
+        if not found_specfile:
+            found_specfile, spec_filename = find_file("%s/rpm/" % project_dir,
+                                                      ".spec")
+            if not found_specfile:
+                return False, "No specfile"
+    spec_file = open(spec_filename, 'r')
+    for line in spec_file:
+        search_result = re.search("^Name:\s+(.*)", line)
+        if search_result:
+            project_name = search_result.group(1)
+        search_result = re.search("^Version:\s+(.*)", line)
+        if search_result:
+            project_version = search_result.group(1)
+        search_result = re.search("^Source0:\s+(.*)", line)
+        if search_result:
+            tar_file_name = search_result.group(1)
+            tar_file_name = tar_file_name.replace('%{name}',
+                                                  project_name)
+            tar_file_name = tar_file_name.replace('%{version}',
+                                                  project_version)
+    spec_file.close()
+    copy(spec_filename, build_directory)
+    spec_filename = os.path.join(build_directory, basename(spec_filename))
+    if isdir("%s/rpm/" % project_dir):
+        for file in os.listdir("%s/rpm/" % project_dir):
+            full_file_name = os.path.join("%s/rpm/" % project_dir, file)
+            if (isfile(full_file_name)):
+                copy(full_file_name, build_directory)
+    for file in os.listdir(project_dir):
+        if file.endswith(".patch"):
+            full_patch_file_name = os.path.join(project_dir, file)
+            if (isfile(full_patch_file_name)):
+                copy(full_patch_file_name, build_directory)
+
+    tmp_projectdir = tempfile.mkdtemp(prefix='sysroot-')
+    # Move and rename the source directory
+    copytree(project_dir, "/%s/%s-%s" % (tmp_projectdir,
+                                         project_name,
+                                         project_version))
+    if isfile("/%s/%s" % (tmp_projectdir, tar_file_name)):
+        os.remove("/%s/%s" % (tmp_projectdir, tar_file_name))
+    tar_process = subprocess.Popen(["tar",
+                                    "-C",
+                                    "/%s" % tmp_projectdir,
+                                    "-ScpJf",
+                                    "/%s/%s" % (tmp_projectdir, tar_file_name),
+                                    "%s-%s" % (project_name, project_version)],
+                                   stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE)
+    stdout_value, stderr_value = tar_process.communicate()
+    if stderr_value:
+        return False, stderr_value.decode("utf-8")
+    if isfile("/%s/%s" % (tmp_projectdir, tar_file_name)):
+        move("/%s/%s" % (tmp_projectdir, tar_file_name),
+             os.path.join(build_directory, "%s" % tar_file_name))
+    if not options.no_build_dep_check:
+        rpmspec_process = subprocess.Popen(["chroot",
+                                            "%s" % sysroot_directory,
+                                            "/bin/su",
+                                            "-",
+                                            "%s" % os.environ['SUDO_USER'],
+                                            "-c",
+                                            "cd %s " % build_directory +
+                                            "&& rpmspec --query " +
+                                            "--buildrequires " +
+                                            "%s" % spec_filename],
+                                           stdout=subprocess.PIPE,
+                                           stderr=subprocess.PIPE)
+        stdout_value, stderr_value = rpmspec_process.communicate()
+        dependencies = stdout_value.split('\n')
+        for index, dependency in enumerate(dependencies):
+            if "pkgconfig" in dependency:
+                zypper_wp_process = subprocess.Popen(["chroot",
+                                                      "%s" % sysroot_directory,
+                                                      "zypper",
+                                                      "wp",
+                                                      "%s" % dependency],
+                                                     stdout=subprocess.PIPE,
+                                                     stderr=subprocess.PIPE)
+                stdout_value, stderr_value = zypper_wp_process.communicate()
+                if stderr_value:
+                    return False, stderr_value.decode("utf-8")
+                for line in stdout_value.splitlines():
+                    package_match = re.search('.*\|\s(.*)\s\|.*\| package',
+                                              line)
+                    if package_match:
+                        dependencies[index] = package_match.group(1)
+                        break
+        # Install the build dependencies to the sysroot
+        updated_sysroot, update_return = update_sysroot(sysroot_directory)
+        if not updated_sysroot:
+            return False, "Updating the sysroot is failed: %s" % update_return
+        installed, install_output = install_packages("%s" % sysroot_directory,
+                                                     dependencies)
+        if not installed:
+            return False, "Installing the build dependencies is failed: " +\
+                          "%s" % install_output
+    logfile = "%s/%s-%s.buildlog" % (build_directory,
+                                     project_name,
+                                     int(time.time()))
+    subprocess.call(["chroot",
+                     "%s" % sysroot_directory,
+                     "/bin/su",
+                     "%s" % os.environ['SUDO_USER'],
+                     "-c",
+                     "cd %s && " % build_directory +
+                     "MAKEFLAGS=\"-j%s\" rpmbuild -bb " % options.jobs +
+                     "%s " % os.path.join(build_directory,
+                                          basename(spec_filename)) +
+                     " --define \"_topdir %s\"" % re.sub('SOURCES$',
+                                                         '',
+                                                         build_directory) +
+                     " --target %s |& tee %s" % (arch, logfile)])
+    print(bcolors.OKGREEN +
+          "The build logs are saved to %s" % logfile +
+          bcolors.ENDC)
+    rpm_packages_list = []
+    for root, dirs, files in os.walk("%s/RPMS" % dirname(build_directory)):
+        for file in files:
+            if file.endswith(".rpm"):
+                rpm_packages_list.append(os.path.join(root, file))
+    if not rpm_packages_list:
+        return False, rpm_packages_list
+    else:
+        return True, rpm_packages_list
+
+
+def check_tool_dependencies(tools):
+    missing_dependencies = False
+    for tool in tools:
+        try:
+            tool_process = subprocess.Popen(["%s" % tool, "-h"],
+                                            stdout=subprocess.PIPE,
+                                            stderr=subprocess.PIPE)
+            stdout_value, stderr_value = tool_process.communicate()
+        except OSError as e:
+            if e.errno == os.errno.ENOENT:
+                print("The " +
+                      bcolors.FAIL +
+                      "%s" % tool +
+                      bcolors.ENDC +
+                      " is not available. Please install" +
+                      " it before using sysroot tool.")
+                missing_dependencies = True
+            else:
+                print("Something went wrong while trying to run `%s`" % tool)
+    if missing_dependencies:
+        umount_and_exit(1)
+
+
+def download_packages(repository, packages, sysroot_directory):
+    try:
+        package_list_page = urllib2.urlopen(repository, timeout=10)
+    except urllib2.HTTPError, err:
+        if err.code == 401:
+            return False, "No permission, incorect username or password."
+        print("Could not connect to " +
+              bcolors.FAIL +
+              "%s" % (repository) +
+              bcolors.ENDC +
+              "\nError code: %s" % err.code)
+        return False, repository
+    except urllib2.URLError, err:
+        print("Could not connect " +
+              bcolors.FAIL +
+              "%s" % repository +
+              bcolors.ENDC +
+              "\nError code: %s" % err.reason)
+        return False, repository
+    repository_package_list = package_list_page.read().decode('utf-8')
+    for package in packages:
+        package_name_match = re.search('(href=")(%s-\d[^">]+\.rpm)' %
+                                       re.escape(package),
+                                       repository_package_list)
+        if package_name_match:
+            package_name = package_name_match.group(2)
+            log_text("Downloading: " + bcolors.OKGREEN +
+                     "%s" % package_name + bcolors.ENDC)
+            try:
+                package_file = urllib2.urlopen("%s/%s" % (repository,
+                                                          package_name))
+            except urllib2.HTTPError, err:
+                print("Could not open " +
+                      bcolors.FAIL +
+                      "%s/%s" % (repository, package_name) +
+                      bcolors.ENDC +
+                      "\nError code: %s" % err.code)
+            except urllib2.URLError, err:
+                print("Could not open" +
+                      bcolors.FAIL +
+                      "%s/%s" % (repository, package_name) +
+                      bcolors.ENDC +
+                      "\nError code: %s" % err.reason)
+            package_data = package_file.read()
+            if not os.path.exists(sysroot_directory):
+                os.makedirs(sysroot_directory)
+            with open("%s/%s" % (sysroot_directory,
+                                 package_name), "wb") as code:
+                code.write(package_data)
+        else:
+            return False, package
+    return True, 0
+
+
+def unpack_rpm_packags(sysroot_directory):
+    # Change the working directory to the sysroot because unpacking the rpms is
+    # convenient to the local directory.
+    orig_dir = os.getcwd()
+    os.chdir(sysroot_directory)
+    current_working_directory = os.getcwd()
+    for package_name in os.listdir(current_working_directory):
+        if package_name.endswith(".rpm"):
+            log_text("Processing" + bcolors.OKGREEN + " %s " % package_name +
+                     bcolors.ENDC + "package")
+            try:
+                rpm2cpio = subprocess.Popen(('rpm2cpio',
+                                             '%s' % package_name),
+                                            stdout=subprocess.PIPE,
+                                            stderr=subprocess.PIPE)
+                try:
+                    cpio = subprocess.check_output(('cpio',
+                                                    '-i', '-d'),
+                                                   stdin=rpm2cpio.stdout,
+                                                   stderr=subprocess.PIPE)
+                except subprocess.CalledProcessError, e:
+                    os.chdir(orig_dir)
+                    return False, "cpio failed %s" % e.output
+                rpm2cpio.wait()
+            except subprocess.CalledProcessError, e:
+                os.chdir(orig_dir)
+                return False, "rpm2cpio failed: %s" % e.output
+            continue
+        else:
+            continue
+    os.chdir(orig_dir)
+    return True, 0
+
+
+def which_qemu(qemu_static_binary):
+    which_qemu_process = subprocess.Popen(["which",
+                                           "%s" % qemu_static_binary],
+                                          stdout=subprocess.PIPE,
+                                          stderr=subprocess.PIPE)
+    stdout_value, stderr_value = which_qemu_process.communicate()
+    if stderr_value or not stdout_value.rstrip():
+        return False, stderr_value.decode("utf-8")
+
+    return True, stdout_value.rstrip()
+
+
+def mount_system_dir(directory, option, parameter, sysroot_directory):
+    mount_process = subprocess.Popen(["mount",
+                                      "%s" % option,
+                                      "%s" % parameter,
+                                      "/%s" % directory,
+                                      "%s/%s" % (sysroot_directory,
+                                                 directory)],
+                                     stdout=subprocess.PIPE,
+                                     stderr=subprocess.PIPE)
+    stdout_value, stderr_value = mount_process.communicate()
+    if stderr_value:
+        return False, "Mount failed: %s" % stderr_value.decode("utf-8")
+    return True, 0
+
+
+def umount_system_dir(sysroot_directory):
+    mount_process = subprocess.Popen(["mount"],
+                                     stdout=subprocess.PIPE,
+                                     stderr=subprocess.PIPE)
+    stdout_value, stderr_value = mount_process.communicate()
+    if stderr_value:
+        return False, "mount failed: %s" % stderr_value.decode("utf-8")
+    for line in sorted(stdout_value.splitlines()):
+        if sysroot_directory in line:
+            umount_process = subprocess.Popen(["umount",
+                                               "-l",
+                                               "%s" % line.split()[2]],
+                                              stdout=subprocess.PIPE,
+                                              stderr=subprocess.PIPE)
+            stdout_value, stderr_value = umount_process.communicate()
+            if stderr_value:
+                return False, "Umount failed: %s" % stderr_value
+    return True, 0
+
+
+def install_macros(macros, target):
+    for macro in macros:
+        if urlparse(macro).netloc:
+            setup_authentication(macro, username, password, ssl_certificate)
+            try:
+                configuration_page = urllib2.urlopen(macro, timeout=10)
+            except urllib2.HTTPError, err:
+                if err.code == 401:
+                    return False, "No permission, incorect" +\
+                                  " username or password."
+                return False, "Could not connect to " +\
+                              "%s" % macro + "\nError code: %s" % err.code
+            except urllib2.URLError, err:
+                return Flase, "Could not connect " +\
+                              "%s" % macro + "\nError code: %s" % err.reason
+            configuration_data = configuration_page.read().decode('utf-8')
+            macros_lines = []
+            macros_started = False
+            for line in configuration_data.splitlines():
+                if "Macros:" in line:
+                    macros_started = True
+                    continue
+                if macros_started:
+                    macros_lines.append(line)
+            with open("%s/macros.%s" % (target,
+                                        urlparse(macro).path.replace('/',
+                                                                     '-')),
+                      "wb") as code:
+                code.write("\n".join(macros_lines))
+        else:
+            try:
+                copy(macro, target)
+            except IOError, e:
+                return False, "%s Could not be copied - %s" % (macro, e)
+    return True, 0
+
+
+def install_repos(repos, target):
+    for repo in repos:
+        if not (os.path.isabs(repo)):
+            repo = "%s/%s" % (dirname(abspath(options.template_file)), repo)
+        try:
+            copy(repo, target)
+        except IOError, e:
+            return False, e
+    return True, 0
+
+
+def set_zypper_arch(arch, zypp_conf):
+    lines = []
+    try:
+        with open(zypp_conf, 'r') as zypp_conf_file:
+            for line in zypp_conf_file:
+                line = line.replace("# arch = s390", "arch = %s" % arch)
+                lines.append(line)
+    except IOError as e:
+        return False, "Can not read zypp.conf ({0}): {1}".format(e.errno,
+                                                                 e.strerror)
+    zypp_conf_file.close()
+    try:
+        with open(zypp_conf, 'w') as zypp_conf_file:
+            for line in lines:
+                zypp_conf_file.write(line)
+    except IOError as e:
+        return False, "Can not write zypp.conf ({0}): {1}".format(e.errno,
+                                                                  e.strerror)
+    zypp_conf_file.close()
+    return True, 0
+
+
+def fix_sshd_config(sshd_conf):
+    lines = []
+    try:
+        with open(sshd_conf, 'r') as sshd_conf_file:
+            for line in sshd_conf_file:
+                line = re.sub(r'^.*PubkeyAuthentication .*$',
+                              'PubkeyAuthentication yes',
+                              line)
+                line = re.sub(r'^\s*#UsePAM\s*no',
+                              'UsePAM no',
+                              line)
+                line = re.sub(r'^.*UsePAM\s*yes',
+                              '#UsePAM yes',
+                              line)
+                line = re.sub(r'^.*AuthorizedKeysCommand .*$',
+                              'AuthorizedKeysCommand /etc/ssh/authorized_keys.d/keys.sh',
+                              line)
+                line = re.sub(r'^.*AuthorizedKeysCommandUser .*$',
+                              'AuthorizedKeysCommandUser nobody',
+                              line)
+
+                lines.append(line)
+    except IOError as e:
+        return False, "Can not read sshd_config ({0}): {1}".format(e.errno,
+                                                                   e.strerror)
+    sshd_conf_file.close()
+    try:
+        with open(sshd_conf, 'w') as sshd_conf_file:
+            for line in lines:
+                sshd_conf_file.write(line)
+    except IOError as e:
+        return False, "Can not write sshd_config ({0}): {1}".format(e.errno,
+                                                                    e.strerror)
+    sshd_conf_file.close()
+    return True, 0
+
+
+def copy_credentials(credentials, target):
+    if not exists(target):
+        try:
+            os.makedirs(target)
+        except OSError as e:
+            return False, "Error({0}): {1}".format(e.errno, e.strerror)
+    for credential in credentials:
+        if not (os.path.isabs(credential)):
+            credential = "%s/%s" % (dirname(abspath(options.template_file)),
+                                    credential)
+
+        try:
+            copy(credential, target)
+        except IOError, e:
+            return False, "Error({0}): {1}".format(e.errno, e.strerror)
+    return True, 0
+
+
+def install_cert(certificate, target, sysroot_directory):
+    try:
+        certificate_file = open(certificate)
+    except IOError as e:
+        return False, "I/O error({0}): {1}".format(e.errno, e.strerror)
+    try:
+        with open("%s/%s" % (sysroot_directory, target), "w") as target_file:
+            target_file.write(certificate_file.read())
+    except IOError as e:
+        return False, "I/O error({0}): {1}".format(e.errno, e.strerror)
+    certificate_file.close()
+    target_file.close()
+    return True, 0
+
+
+def copy_conf(conf, target):
+    try:
+        copy(conf, target)
+    except IOError, e:
+        return False, "Error({0}): {1}".format(e.errno, e.strerror)
+    return True, 0
+
+
+def update_sysroot(sysroot):
+    lines = []
+    if isfile("%s/usr/bin/multi_c_rehash" % sysroot):
+        multi_c_rehash_process = subprocess.Popen(["chroot",
+                                                   "%s" % sysroot,
+                                                   "multi_c_rehash"],
+                                                  stdout=subprocess.PIPE,
+                                                  stderr=subprocess.PIPE)
+        stdout_value, stderr_value = multi_c_rehash_process.communicate()
+        if stderr_value:
+            return False, stderr_value.decode("utf-8")
+        lines.append(stdout_value.rstrip())
+    zypper_refresh_process = subprocess.Popen(["chroot",
+                                               "%s" % sysroot,
+                                               "zypper",
+                                               "refresh"],
+                                              stdout=subprocess.PIPE,
+                                              stderr=subprocess.PIPE)
+    stdout_value, stderr_value = zypper_refresh_process.communicate()
+    if stderr_value:
+        return False, stderr_value.decode("utf-8")
+    lines.append(stdout_value.rstrip())
+    zypper_dup_process = subprocess.Popen(["chroot",
+                                           "%s" % sysroot,
+                                           "zypper",
+                                           "--non-interactive",
+                                           "dup"],
+                                          stdout=subprocess.PIPE,
+                                          stderr=subprocess.PIPE)
+    stdout_value, stderr_value = zypper_dup_process.communicate()
+    if stderr_value:
+        return False, stderr_value.decode("utf-8")
+    lines.append(stdout_value.rstrip())
+    return True, ''.join(lines)
+
+
+def install_packages(sysroot, packages):
+    for package in packages:
+        log_text("Installing: " + bcolors.OKGREEN +
+                 "%s" % package + bcolors.ENDC)
+        zypper_install_process = subprocess.Popen(["chroot",
+                                                   "%s" % sysroot,
+                                                   "zypper",
+                                                   "--non-interactive",
+                                                   "install",
+                                                   "%s" % package],
+                                                  stdout=subprocess.PIPE,
+                                                  stderr=subprocess.PIPE)
+        stdout_value, stderr_value = zypper_install_process.communicate()
+        if stderr_value:
+            print stdout_value.decode("utf-8")
+            return False, stderr_value.decode("utf-8")
+    log_text("The installation is done.")
+    return True, stdout_value.rstrip()
+
+
+def remove_files(files, directory):
+    try:
+        directory_list = os.listdir(directory)
+    except OSError as e:
+        return False, "Error listing directory ({0}): {1}".format(e.errno,
+                                                                  e.strerror)
+    for file_name in directory_list:
+        if re.search('%s' % files, file_name):
+            try:
+                os.remove("%s/%s" % (directory, file_name))
+            except OSError as e:
+                return False, "Error removing ({0}): {1}".format(e.errno,
+                                                                 e.strerror)
+    return True, 0
+
+
+def tar_sysroot(directory):
+    try:
+        isdir(directory)
+    except:
+        return False, "Error listing directory ({0}): {1}".format(e.errno,
+                                                                  e.strerror)
+    sysroot_parts = os.listdir(directory)
+    log_text("Creating the %s-sysroot.tar.xz file" % directory)
+    tar_process = subprocess.Popen(["tar",
+                                    "-C",
+                                    "%s" % directory,
+                                    "-ScpJf",
+                                    "%s-sysroot.tar.xz" % directory,
+                                    "./"],
+                                   stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE)
+    stdout_value, stderr_value = tar_process.communicate()
+    if stderr_value:
+        print stdout_value.decode("utf-8")
+        return False, stderr_value.decode("utf-8")
+    return True, "%s-sysroot.tar.xz" % directory
+
+
+def untar_sysroot(sysroot_tarfile, directory):
+    try:
+        isfile(sysroot_tarfile)
+    except:
+        return False, "%s does not exist" % sysroot_tarfile
+    try:
+        isdir(directory)
+    except:
+        return False, "Error listing directory ({0}): {1}".format(e.errno,
+                                                                  e.strerror)
+    log_text("Unpacking the %s file to %s\r" % (sysroot_tarfile, directory))
+    untar_process = subprocess.Popen(["tar",
+                                      "-C",
+                                      "%s" % directory,
+                                      "-SxJf",
+                                      "%s" % sysroot_tarfile],
+                                     stdout=subprocess.PIPE,
+                                     stderr=subprocess.PIPE)
+    stdout_value, stderr_value = untar_process.communicate()
+    if stderr_value:
+        print stdout_value.decode("utf-8")
+        return False, stderr_value.decode("utf-8")
+    return True, 0
+
+
+def check_valid_json_file(value):
+    if not isfile(value):
+        raise argparse.ArgumentTypeError("%s does not exist" % value)
+    try:
+        with open(value) as json_file:
+            json.load(json_file)
+    except:
+        raise argparse.ArgumentTypeError('Can not parse json file: %s' % value)
+    return value
+
+
+def check_mode(value):
+    if value not in ("create", "mount", "umount", "login", "build"):
+        raise argparse.ArgumentTypeError('Give valid sysroot command' +
+                                         '(create/mount/umount/login/build)')
+    return value
+
+
+def check_target_dir(value):
+    if not isdir(value):
+        # Create the taret directory
+        try:
+            if os.geteuid() == 0:
+                os.makedirs(value)
+        except OSError as e:
+            raise argparse.ArgumentTypeError("%s " % value +
+                                             "is not a valid directory")
+    if (os.geteuid() == 0 and
+       "home/%s" % os.environ['SUDO_USER'] in abspath(value)):
+        raise argparse.ArgumentTypeError("The %s can not " % abspath(value) +
+                                         "be the target directory")
+    return value
+
+
+def check_project_name(value):
+    if not isdir(value) and value != "":
+        raise argparse.ArgumentTypeError("%s is not a valid project" % value)
+    return value
+
+
+def check_jobs(value):
+    try:
+        value = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("The value must be a number.")
+    if not (1 <= value <= cpu_count() + 1):
+        raise argparse.ArgumentTypeError("%s " % value +
+                                         "is not valid. Number of jubs must " +
+                                         "be in the " +
+                                         "[1..%s] range." % cpu_count() + 1)
+    return value
+
+
+def make_md5_sha256(file_name):
+    hash_md5 = hashlib.md5()
+    hash_sha256 = hashlib.sha256()
+    with open(file_name, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            hash_sha256.update(chunk)
+            hash_md5.update(chunk)
+    return (hash_md5.hexdigest(),
+            hash_sha256.hexdigest())
+
+# Disable the SIGINT for safety reasons
+keyboard_interrupt = keyboard_interrupt_class()
+keyboard_interrupt.disable()
+
+check_tool_dependencies(["rpm2cpio",
+                         "cpio",
+                         "chroot",
+                         "tar",
+                         "qemu-arm-static"])
+
+epilog_text = "TEMPLATE_FILE:\n" + \
+              "  In case of creating sysroot it is a json file what" + \
+              " defines the sysroot to be created\n" + \
+              "  When mounting or umounting an existing sysroot this " + \
+              "is a json file next to the sysroot.tar.xz\n\n" + \
+              "WORK_DIRECTORY:\n" + \
+              "  Directory name where the sysroot files and the sysroot " + \
+              "chroots will be placed\n\n" + \
+              "PROJECT_NAME:\n" + \
+              "  Directory name where the project's sourcre tree is " + \
+              "located.\n\n" + \
+              "Examples\n\n" + \
+              "To create a new sysroot:\n" + \
+              "  sudo sysroot create -f openSUSE-current.json\n\n" + \
+              "To mount a sysroot file for using it with chroot:\n" + \
+              "  sudo sysroot mount -f " + \
+              "%s/" % os.getcwd() + \
+              "openSUSE-current-1491622992-sysroot.json\n\n" + \
+              "To decouple the mounted sysroot file:\n" + \
+              "  sudo sysroot umount -f " + \
+              "%s/" % os.getcwd() + \
+              "openSUSE-current-1491622992-sysroot.json\n\n" + \
+              "To log in to the sysroot with chroot:\n" + \
+              "  sudo sysroot login -f " + \
+              "%s/" % os.getcwd() + \
+              "openSUSE-current-1491622992-sysroot.json\n\n" + \
+              "To build hello_world project in the sysroot:\n" + \
+              "  sudo sysroot build -f " + \
+              "%s/openSUSE-current-1491622992-sysroot.json " % os.getcwd() + \
+              "-p hello_world\n"
+
+parser = argparse.ArgumentParser(description="SDK sysroot creator",
+                                 epilog=epilog_text,
+                                 formatter_class=RawTextHelpFormatter)
+
+parser.add_argument('-f',
+                    '--template_file',
+                    action="store",
+                    default="sysroot.json",
+                    type=check_valid_json_file)
+
+parser.add_argument('-d',
+                    '--work_directory',
+                    action="store",
+                    default="/var/cache/sysroots/",
+                    type=check_target_dir)
+
+parser.add_argument('-p',
+                    '--project_name',
+                    action="store",
+                    default="",
+                    type=check_project_name)
+
+parser.add_argument("mode",
+                    nargs='?',
+                    default="no_mode",
+                    type=check_mode,
+                    help='Operational mode ' +
+                         '(create | mount | umount | login | build)')
+
+parser.add_argument('--keep',
+                    dest='keep_sysroot',
+                    action='store_true',
+                    help='Options to keep the sysroot after umount.')
+
+parser.add_argument('--no-build-dep-check',
+                    dest='no_build_dep_check',
+                    action='store_true',
+                    help='Option to disable automatic check and ' +
+                         'installation of the build dependencies')
+parser.add_argument('-j',
+                    '--jobs',
+                    action="store",
+                    default="%s" % (cpu_count() + 1),
+                    type=check_jobs)
+
+options = parser.parse_args()
+
+if options.mode == 'build' and options.project_name == "":
+    parser.error('The build command requires a valid project. ' +
+                 'Use the -p option')
+
+# This tool uses system commands enabled only for system administrators
+if os.geteuid() != 0:
+    exit("You need to have" +
+         bcolors.FAIL +
+         " root privileges" +
+         bcolors.ENDC +
+         " to run this tool.\nPlease try again, using 'sudo'")
+
+if os.isatty(sys.stdout.fileno()):
+    if options.mode == "create":
+        info_text = "Creating"
+    if options.mode == "mount":
+        info_text = "Mounting"
+    if options.mode == "umount":
+        info_text = "Decoupling"
+    if options.mode == "login":
+        info_text = "Logging"
+    if options.mode == "build":
+        info_text = "Building in"
+    print("%s sysroot based on " % info_text +
+          bcolors.OKGREEN +
+          options.template_file +
+          bcolors.ENDC)
+    consol_log = True
+else:
+    bcolors = bcolors()
+    bcolors.disable()
+    consol_log = False
+
+with open(options.template_file) as json_file:
+    sysroot_data = json.load(json_file)
+
+if options.mode == "create":
+    try:
+        sysroot_directory_name = sysroot_data["sysroot_directory"]
+    except:
+        sysroot_directory = False
+        print("The " + bcolors.WARNING + "%s" % options.template_file +
+              bcolors.ENDC + " is not a valid sysroot template")
+
+        umount_and_exit(1)
+    valid_chars = "-_.() %s%s" % (string.ascii_letters, string.digits)
+    for c in sysroot_directory_name:
+        if c not in valid_chars:
+            print("sysroot name is not valid %s" % sysroot_directory_name)
+            umount_and_exit(1)
+    sysroot_creation_time = int(time.time())
+    sysroot_directory = "%s/%s-%d" % (abspath(options.work_directory),
+                                      sysroot_directory_name,
+                                      sysroot_creation_time)
+    try:
+        username = sysroot_data["username"]
+        password = sysroot_data["password"]
+        if not username.strip() or not password.strip():
+            raise Exception
+    except:
+        print("No " + bcolors.WARNING + "username/password " + bcolors.ENDC +
+              "for the repositories are set in %s" %
+              options.template_file)
+        password = False
+        username = False
+
+    try:
+        ssl_certificate = sysroot_data["ssl_certificate"]
+        if not ssl_certificate.strip():
+            raise Exception
+    except:
+        print("No " + bcolors.WARNING + "SSL certificate " + bcolors.ENDC +
+              "is used in the sysroot")
+        ssl_certificate = False
+        pass
+    if ssl_certificate:
+        if not (os.path.isabs(ssl_certificate)):
+            ssl_certificate = "%s" % dirname(abspath(options.template_file)) +\
+                              "/%s" % ssl_certificate
+
+        if not isfile(ssl_certificate):
+            print("SSL certificate file " +
+                  bcolors.FAIL +
+                  "%s" % ssl_certificate +
+                  bcolors.ENDC +
+                  " is not valid")
+            ssl_certificate = False
+    try:
+        target_arch = sysroot_data["target_arch"]
+        if not target_arch.strip():
+            raise exception
+    except:
+        print("target " + bcolors.warning + "architecture " + bcolors.endc +
+              "is not defined in the %s" %
+              options.template_file)
+        target_arch = False
+    try:
+        qemu_static = sysroot_data["qemu_static"]
+        if not qemu_static.strip():
+            raise Exception
+    except:
+        print("Static " + bcolors.WARNING + "QEMU binary " + bcolors.ENDC +
+              "is not defined. Emulation will not work")
+        qemu_static = False
+
+    try:
+        project_configurations = sysroot_data["project_configurations"]
+        for configuration in project_configurations:
+            if not configuration.strip():
+                raise Exception
+    except:
+        project_configurations = False
+
+    if ssl_certificate:
+        try:
+            target_certs = sysroot_data["target_certs"]
+            for target_cert in target_certs:
+                if not target_cert.strip():
+                    raise Exception
+        except:
+            print("No " + bcolors.WARNING + "certificate target " +
+                  bcolors.ENDC +
+                  "(target_certs) is set for %s in %s" %
+                  (ssl_certificate, options.template_file))
+            umount_and_exit(1)
+    try:
+        keep_zypp_settints = sysroot_data["keep_zypp_settints"]
+    except:
+        print("No settings for keeping or not the injected zypp settings")
+        keep_zypp_settints = False
+
+    # Create the sysroot directory
+    try:
+        os.makedirs(sysroot_directory)
+    except OSError as e:
+        if e.errno != errno.EEXIST:
+            raise  # raises the error again
+        else:
+            print(bcolors.FAIL +
+                  "The %s directory already exists" % sysroot_directory +
+                  bcolors.ENDC)
+        umount_and_exit(1)
+
+    try:
+        repositories = sorted(sysroot_data["repositories"],
+                              key=lambda x: x['type'])
+        if not repositories:
+            raise Exception
+    except:
+        print("No repositories defined (repositories) in %s" %
+              options.template_file)
+        umount_and_exit(1)
+
+    for idx, repository in enumerate(repositories):
+        try:
+            repository_packages = repository["packages"]
+            if len(repository_packages) == 0:
+                raise Exception
+        except:
+            print("No " + bcolors.WARNING + "packages" + bcolors.ENDC +
+                  " were defined in %s for %s repository" %
+                  (options.template_file, repository))
+            umount_and_exit(1)
+
+        if (not isinstance(repository_packages, list) and
+           repository_packages.startswith('$')):
+            package_reference_match = re.search('\$(.*)', repository_packages)
+            if package_reference_match:
+                package_reference = package_reference_match.group(1)
+                for reference in repositories:
+                    if reference["name"] == package_reference:
+                        repositories[idx]["packages"] = reference["packages"]
+                        repository_packages = reference["packages"]
+                        break
+
+        repository_type = repository["type"]
+        # cross or native
+        if repository_type == "cross":
+            repository_url = repository["url"]
+            repository_target = repository["target"]
+            repository_name = repository["repository"]
+            try:
+                repository_username = repository["username"]
+                if repository_username == "$parent":
+                    repository_username = username
+                repository_password = repository["password"]
+                if repository_password == "$parent":
+                    repository_password = password
+                if (not repository_username.strip() or
+                   not repository_password.strip()):
+                    raise Exception
+            except:
+                print("No " +
+                      bcolors.WARNING +
+                      "username/password " +
+                      bcolors.ENDC +
+                      "for the repositories are set in %s" %
+                      options.template_file)
+                repository_password = False
+                repository_username = False
+            if repository_username:
+                # Set up the username/password authentication only if these
+                # values were configured. Otherwise expect package server
+                # without authentication
+                setup_authentication(repository_url,
+                                     repository_username,
+                                     repository_password,
+                                     ssl_certificate)
+            # Download the available rpm file for the listed packages
+            downloaded, failed = download_packages("%s/%s"
+                                                   % (repository_url,
+                                                      repository_name),
+                                                   repository_packages,
+                                                   "%s/%s"
+                                                   % (sysroot_directory,
+                                                      repository_target))
+            if not downloaded:
+                print("Could not download " +
+                      bcolors.FAIL +
+                      "%s" % failed +
+                      bcolors.ENDC)
+                umount_and_exit(1)
+
+            # Unpack all the downloaded rpm packages. This is a dirty but
+            # necessary method what will be corrected by the first
+            # `zypper dup` executed on the sysroot
+            unpacked, failed = unpack_rpm_packags("%s/%s"
+                                                  % (sysroot_directory,
+                                                     repository_target))
+            if not unpacked:
+                print("Could not unpack " +
+                      bcolors.FAIL +
+                      "%s" % failed +
+                      bcolors.ENDC)
+                umount_and_exit(1)
+            removed, remove_error = remove_files("rpm",
+                                                 "%s/%s"
+                                                 % (sysroot_directory,
+                                                    repository_target))
+            if not removed:
+                print("remove_files_rpm: " + bcolors.FAIL +
+                      " %s" % remove_error + bcolors.ENDC)
+                umount_and_exit(1)
+
+        if repository_type == "native":
+            try:
+                zypp_repos = repository["zypp_repos"]
+                for zypp_repository in zypp_repos:
+                    if not zypp_repository.strip():
+                        raise Exception
+            except:
+                print("No " + bcolors.WARNING +
+                      "zypper repositories " + bcolors.ENDC +
+                      "(zypp_repos) are defined in %s" %
+                      options.template_file)
+                umount_and_exit(1)
+            try:
+                zypp_credentials = repository["zypp_credentials"]
+                for zypp_credential in zypp_credentials:
+                    if not zypp_credential.strip():
+                        raise Exception
+            except:
+                print("No zypper " + bcolors.WARNING + "zypp_credentials " +
+                      bcolors.ENDC +
+                      "are defined in %s" %
+                      options.template_file)
+                zypp_credentials = False
+
+            # Copy the zypp repositories to the sysroot
+            copied_repos, repo_copy_error = install_repos(zypp_repos,
+                                                          "%s"
+                                                          % sysroot_directory +
+                                                          "/etc/zypp/repos.d/")
+            if not copied_repos:
+                print("copied_repos: " + bcolors.FAIL +
+                      " %s" % repo_copy_error + bcolors.ENDC)
+                umount_and_exit(1)
+
+            # If the zypp repositories need authentication and the credentials
+            # are configured then copy the zypper credentials to the sysroot.
+            if zypp_credentials:
+                copied_creds, \
+                    copy_error = copy_credentials(zypp_credentials,
+                                                  "%s" % sysroot_directory +
+                                                  "/etc/zypp/credentials.d/")
+                if not copied_creds:
+                    print("copied_creds: " + bcolors.FAIL +
+                          " %s" % copy_error + bcolors.ENDC)
+                    umount_and_exit(1)
+
+if options.mode in ("mount", "umount", "login", "build"):
+    try:
+        sysroot_file_name = sysroot_data["file_name"]
+        if not sysroot_file_name.strip():
+            raise ValueError("file_name is empty")
+        sysroot_file_path = "%s/%s" % (dirname(abspath(options.template_file)),
+                                       sysroot_file_name)
+        if not isfile(sysroot_file_path):
+            raise ValueError("%s does not exist" % sysroot_file_path)
+    except ValueError as msg:
+        print("Wrong sysroot file: %s" % msg)
+        umount_and_exit(1)
+    except:
+        print("There is no file_name field in %s" % options.template_file)
+        umount_and_exit(1)
+    try:
+        sysroot_file_size = sysroot_data["size"]
+        if os.path.getsize(sysroot_file_path) != sysroot_file_size:
+            raise ValueError("The size of %s is not equal with the value " +
+                             "(%s) of size in %s." % (sysroot_file_path,
+                                                      sysroot_file_size,
+                                                      options.template_file))
+    except ValueError as msg:
+        print("%s" % msg)
+        umount_and_exit(1)
+    except:
+        print("There is ne size field in %s" % options.template_file)
+        umount_and_exit(1)
+    try:
+        sysroot_file_architecture = sysroot_data["architecture"]
+    except:
+        print("There is no architecture field in %s" % options.template_file)
+        umount_and_exit(1)
+    try:
+        sysroot_file_sha256 = sysroot_data["sha256"]
+    except:
+        print("There is no sha256 field in %s" % options.template_file)
+        umount_and_exit(1)
+    try:
+        sysroot_file_md5 = sysroot_data["md5"]
+    except:
+        print("There is no md5 field in %s" % options.template_file)
+        umount_and_exit(1)
+    md5, sha256 = make_md5_sha256(sysroot_file_path)
+    if md5 != sysroot_file_md5:
+        print("The md5 checksum does not match for %s" % sysroot_file_path)
+        umount_and_exit(1)
+    if sha256 != sysroot_file_sha256:
+        print("The sha256 checksum does not match for %s" % sysroot_file_path)
+        umount_and_exit(1)
+    sysroot_directory_match = re.search('(.*)-sysroot\.tar\.xz',
+                                        sysroot_file_name)
+    if sysroot_directory_match:
+        sysroot_directory = "%s/%s" % (abspath(options.work_directory),
+                                       sysroot_directory_match.group(1))
+
+if options.mode in ("mount", "login", "build") and \
+   not exists(sysroot_directory):
+
+    # Create the sysroot directory
+    try:
+        os.makedirs(sysroot_directory)
+    except OSError as e:
+        print(bcolors.FAIL +
+              "Can not create directory ({0}): {1}".format(e.errno,
+                                                           e.strerror) +
+              colors.ENDC)
+        umount_and_exit(1)
+
+    # Unpack up the sysroot file to the sysroot directory
+    tarfile = dirname(abspath(options.template_file))
+    untared, untar_result = untar_sysroot("%s/%s" % (tarfile,
+                                          sysroot_file_name),
+                                          sysroot_directory)
+    if not untared:
+        print(bcolors.FAIL + " %s" % untar_result + bcolors.ENDC)
+        umount_and_exit(1)
+
+if options.mode == "create":
+    # If the qemu_static is set then find the qemu static binary on the host
+    # and copy to the sysroot. Otherwise the sysroot is going to be a native
+    # one without user space emulation capability.
+    if options.mode == "create" and qemu_static:
+        found_qemu, qemu_static_binary = which_qemu(qemu_static)
+        if not found_qemu:
+            print(bcolors.FAIL +
+                  "No static ARM qemu found" +
+                  bcolors.ENDC)
+            umount_and_exit(1)
+        try:
+            copy(qemu_static_binary, '%s/usr/bin/' % sysroot_directory)
+        except IOError, e:
+            print("Unable to copy file." +
+                  bcolors.FAIL +
+                  " %s" % e +
+                  bcolors.ENDC)
+            umount_and_exit(1)
+    # Create the system directories in the sysroot
+    if not exists('%s/proc' % sysroot_directory):
+        os.makedirs('%s/proc' % sysroot_directory)
+    if not exists('%s/dev' % sysroot_directory):
+        os.makedirs('%s/dev' % sysroot_directory)
+    if not exists('%s/dev/pts' % sysroot_directory):
+        os.makedirs('%s/dev/pts' % sysroot_directory)
+    if not exists('%s/sys' % sysroot_directory):
+        os.makedirs('%s/sys' % sysroot_directory)
+    if not exists('%s/tmp' % sysroot_directory):
+        os.makedirs('%s/tmp' % sysroot_directory)
+
+if options.mode in ("create", "mount", "login", "build"):
+    # Mount the system directories to the sysroot
+    if not ismount("%s/proc" % sysroot_directory):
+        mounted, mount_error = mount_system_dir("proc",
+                                                "-t",
+                                                "proc",
+                                                sysroot_directory)
+        if not mounted:
+            print(bcolors.FAIL + " %s" % mount_error + bcolors.ENDC)
+            umount_and_exit(1)
+    if not ismount("%s/dev" % sysroot_directory):
+        mounted, mount_error = mount_system_dir("dev",
+                                                "-o",
+                                                "bind",
+                                                sysroot_directory)
+        if not mounted:
+            print(bcolors.FAIL + " %s" % mount_error + bcolors.ENDC)
+            umount_and_exit(1)
+    if not ismount("%s/dev/pts" % sysroot_directory):
+        mounted, mount_error = mount_system_dir("dev/pts",
+                                                "-o",
+                                                "bind",
+                                                sysroot_directory)
+        if not mounted:
+            print(bcolors.FAIL + " %s" % mount_error + bcolors.ENDC)
+            umount_and_exit(1)
+    if not ismount("%s/sys" % sysroot_directory):
+        mounted, error = mount_system_dir("sys",
+                                          "-o",
+                                          "bind",
+                                          sysroot_directory)
+        if not mounted:
+            print(bcolors.FAIL + " %s" % mount_error + bcolors.ENDC)
+            umount_and_exit(1)
+    if not ismount("%s/tmp" % sysroot_directory):
+        mounted, error = mount_system_dir("tmp",
+                                          "-o",
+                                          "bind",
+                                          sysroot_directory)
+        if not mounted:
+            print(bcolors.FAIL + " %s" % mount_error + bcolors.ENDC)
+            umount_and_exit(1)
+
+if options.mode in ("build"):
+    sudo_user = os.environ['SUDO_USER']
+    fake_home = "%s/home/%s" % (sysroot_directory, sudo_user)
+    if not exists(fake_home):
+        try:
+            os.makedirs(fake_home)
+            uid = pwd.getpwnam(sudo_user).pw_uid
+            gid = grp.getgrnam(sudo_user).gr_gid
+            chown(fake_home, uid, gid)
+        except OSError as exc:
+            print("OSError %s" % exc)
+            if exc.errno == errno.EEXIST and isdir(fake_home):
+                pass
+            else:
+                raise
+
+if options.mode in ("mount", "login"):
+    if not isdir("%s/home/%s" % (sysroot_directory,
+                                 os.environ['SUDO_USER'])):
+        mounted, error = mount_system_dir("home",
+                                          "-o",
+                                          "rbind",
+                                          sysroot_directory)
+        if not mounted:
+            print(bcolors.FAIL + " %s" % mount_error + bcolors.ENDC)
+            umount_and_exit(1)
+    else:
+        print(bcolors.WARNING +
+              "The sysroot %s is already mounted" % sysroot_directory +
+              bcolors.ENDC)
+
+if options.mode == "create":
+    # Inject the project configuration macros to the sysroot
+    if project_configurations:
+        copied_macros, macro_cp_error = install_macros(project_configurations,
+                                                       "%s/etc/rpm/"
+                                                       % sysroot_directory)
+        if not copied_macros:
+            print("install_macros: " + bcolors.FAIL +
+                  " %s" % macro_cp_error + bcolors.ENDC)
+            umount_and_exit(1)
+
+    # If the target architecture is set then configure the zypp to the target
+    # architecture. Otherwise create a native sysroot what will be the same
+    # architecture as the host where the sysroot is created on.
+    if target_arch:
+        zypper_set, zypper_output = set_zypper_arch(target_arch,
+                                                    "%s/etc/zypp/zypp.conf"
+                                                    % sysroot_directory)
+        if not zypper_set:
+            print("zypper_set: " + bcolors.FAIL +
+                  " %s" % zypper_output + bcolors.ENDC)
+            umount_and_exit(1)
+
+    # If the repositories require SSL certification and it is set in the json
+    # data then inject the necessary certificates to the sysroot.
+    if ssl_certificate:
+        installed_certs, cert_install_error = install_cert(ssl_certificate,
+                                                           target_certs[0],
+                                                           sysroot_directory)
+        if not installed_certs:
+            print("Installing %s failed. " % target_certs[0] +
+                  bcolors.FAIL +
+                  " %s" % cert_install_error +
+                  bcolors.ENDC)
+            umount_and_exit(1)
+        installed_certs, cert_install_error = install_cert(ssl_certificate,
+                                                           target_certs[1],
+                                                           sysroot_directory)
+        if not installed_certs:
+            print("Installing %s failed. " % target_certs[1] +
+                  bcolors.FAIL +
+                  " %s" % cert_install_error +
+                  bcolors.ENDC)
+            umount_and_exit(1)
+
+if options.mode in ("create", "mount", "login", "build"):
+    # Copy the local /etc/resolv.conf to the sysroot to enable network
+    # operations
+    copied_resolv, resolv_copy_error = copy_conf("/etc/resolv.conf",
+                                                 "%s/etc/" %
+                                                 sysroot_directory)
+    if not copied_resolv:
+        print("Could not copy the resolv.conf" + bcolors.FAIL +
+              " %s" % resolv_copy_error + bcolors.ENDC)
+        umount_and_exit(1)
+
+if options.mode == "create":
+    updated_sysroot, update_return = update_sysroot("%s" % sysroot_directory)
+    if not updated_sysroot:
+        print(bcolors.FAIL + " %s" % update_return + bcolors.ENDC)
+        umount_and_exit(1)
+
+if options.mode in ("mount", "login", "build"):
+    # Copy the local /etc/passwd to the sysroot to enable user space
+    # operations
+    copied_passwd, passwd_copy_error = copy_conf("/etc/passwd",
+                                                 "%s/etc/" %
+                                                 sysroot_directory)
+    if not copied_passwd:
+        print("Could not copy the /etc/passwd" + bcolors.FAIL +
+              " %s" % passwd_copy_error + bcolors.ENDC)
+        umount_and_exit(1)
+
+    # Copy the local /etc/group to the sysroot to enable user space
+    # operations
+    copied_group, group_copy_error = copy_conf("/etc/group",
+                                               "%s/etc/" %
+                                               sysroot_directory)
+    if not copied_group:
+        print("Could not copy the /etc/group" + bcolors.FAIL +
+              " %s" % group_copy_error + bcolors.ENDC)
+        umount_and_exit(1)
+
+if options.mode == "mount":
+    print("Use `sudo chroot %s` to enter the sysroot" % sysroot_directory)
+
+if options.mode == "login":
+    print(bcolors.OKGREEN + "Entering the sysroot environment" + bcolors.ENDC)
+    subprocess.call(["chroot",
+                     "%s" % sysroot_directory,
+                     "/bin/su"])
+
+if options.mode == "build":
+    if options.project_name != "":
+        print(bcolors.OKGREEN +
+              "Building in the sysroot environment" +
+              bcolors.ENDC)
+        tmp_build_root = tempfile.mkdtemp(prefix='sysroot-build-')
+        build_directory = "%s/rpmbuild/SOURCES" % tmp_build_root
+        built, packages = build_project(options.project_name,
+                                        build_directory,
+                                        sysroot_file_architecture,
+                                        sysroot_directory)
+        if not built:
+            print(bcolors.FAIL +
+                  "The build of %s is failed." % options.project_name +
+                  bcolors.ENDC)
+            umount_and_exit(1)
+        else:
+            print("The following packages were successfully built:")
+            for package in packages:
+                print(bcolors.OKGREEN + "%s" % package + bcolors.ENDC)
+
+if options.mode == "create":
+    for repository in repositories:
+        repository_packages = repository["packages"]
+        repository_type = repository["type"]
+        # cross or native
+        if repository_type == "cross" and repository["target"] == "/":
+            installed, install_output = install_packages("%s"
+                                                         % sysroot_directory,
+                                                         repository_packages)
+            if not installed:
+                print("packages: " + bcolors.FAIL +
+                      " %s" % install_output + bcolors.ENDC)
+                umount_and_exit(1)
+        if repository_type == "native":
+            # If there is a set of SDK packages listed in the sysroot json
+            # then install the SDK packages to the sysroot. Otherwise the
+            # sysroot is going to be a minimal sysroot without any SDK.
+            installed, install_output = install_packages("%s"
+                                                         % sysroot_directory,
+                                                         repository_packages)
+            if not installed:
+                print("packages: " + bcolors.FAIL +
+                      " %s" % install_output + bcolors.ENDC)
+                umount_and_exit(1)
+    removed, remove_error = remove_files("90-nproc\.conf",
+                                         "%s/etc/security/limits.d" %
+                                         sysroot_directory)
+    if not removed:
+        print("remove_files: " + bcolors.FAIL +
+              " %s" % remove_error + bcolors.ENDC)
+        umount_and_exit(1)
+
+if options.mode in ("create", "umount", "login", "build"):
+    fixed_sshd_conf, fix_ssh_conf_error = fix_sshd_config("%s/etc/ssh/sshd_config" % sysroot_directory)
+    if not fixed_sshd_conf:
+        print("sshd configuration fix failed: " + bcolors.FAIL +
+              " %s" % fix_ssh_conf_error + bcolors.ENDC)
+        umount_and_exit(1)
+    # raw_input('Press enter to continue: ')
+    if isdir(sysroot_directory):
+        # Clean up and decouple the ready sysroot from the host machine
+
+        # Starting with umounting the system directories
+        mounted, umount_error = umount_system_dir(sysroot_directory)
+        if not mounted:
+            print("Could not umount system directories" +
+                  bcolors.FAIL + " %s" % umount_error + bcolors.ENDC)
+    else:
+        print(bcolors.FAIL +
+              "The %s is not mounted" % options.template_file +
+              bcolors.ENDC)
+        umount_and_exit(1)
+
+if options.mode == "create" or options.mode == "umount":
+    if isdir(sysroot_directory):
+        removed, remove_error = remove_files("resolv\.conf",
+                                             "%s/etc/" % sysroot_directory)
+        if not removed:
+            print("remove_files_resolv: " + bcolors.FAIL +
+                  " %s" % remove_error + bcolors.ENDC)
+            umount_and_exit(1)
+    else:
+        print(bcolors.FAIL +
+              "The %s is not mounted" % options.template_file +
+              bcolors.ENDC)
+        umount_and_exit(1)
+
+if options.mode == "umount":
+    if isdir(sysroot_directory):
+        removed, remove_error = remove_files("passwd",
+                                             "%s/etc/" % sysroot_directory)
+        if not removed:
+            print("remove_files_passwd: " + bcolors.FAIL +
+                  " %s" % remove_error + bcolors.ENDC)
+            umount_and_exit(1)
+    else:
+        print(bcolors.FAIL +
+              "The %s is not mounted" % options.template_file +
+              bcolors.ENDC)
+        umount_and_exit(1)
+
+if options.mode == "create":
+    # Removing the rpm files and the /var/log/zypper.log and the zypp settings
+    # The remove_files() takes a regular expression for the files
+    removed, remove_error = remove_files("rpm",
+                                         sysroot_directory)
+    if not removed:
+        print("remove_files_rpm: " + bcolors.FAIL +
+              " %s" % remove_error + bcolors.ENDC)
+        umount_and_exit(1)
+    removed, remove_error = remove_files("zypper\.log",
+                                         "%s/var/log/" % sysroot_directory)
+    if not removed:
+        print("remove_files_zypperlog: " + bcolors.FAIL +
+              " %s" % remove_error + bcolors.ENDC)
+        umount_and_exit(1)
+
+    # If the sysroot is not set up to keep the zypp repositories and
+    # credentials then remove the injected repositories
+    if not keep_zypp_settints:
+        for repository in zypp_repos:
+            removed, \
+                remove_error = remove_files(re.search("([^\/]*\.repo)",
+                                                      repository).group(1),
+                                            "%s/etc/zypp/repos.d/" %
+                                            sysroot_directory)
+            if not removed:
+                print("remove_files_repos: " + bcolors.FAIL +
+                      " %s" % remove_error + bcolors.ENDC)
+                umount_and_exit(1)
+
+        if zypp_credentials:
+            for credential in zypp_credentials:
+                removed, \
+                    rm_error = remove_files(re.search("([^\/]*)$",
+                                                      credential).group(1),
+                                            "%s/etc/zypp/credentials.d/" %
+                                            sysroot_directory)
+                if not removed:
+                    print("remove_files_zypp_creds: " + bcolors.FAIL +
+                          " %s" % remove_error + bcolors.ENDC)
+                    umount_and_exit(1)
+
+    # Pack up the sysroot in tar.gz
+    tared, tar_result = tar_sysroot(sysroot_directory)
+    if not tared:
+        print("tar_sysroot: " + bcolors.FAIL +
+              " %s" % tar_result + bcolors.ENDC)
+        umount_and_exit(1)
+    else:
+        print("Sysroot package: " + bcolors.OKGREEN +
+              " %s" % tar_result + bcolors.ENDC)
+
+    # Calculate the md5 and sh256 checksum for the sysroot image
+    md5, sha256 = make_md5_sha256(tar_result)
+    creation_time = strftime("%a, %d %b %Y %H:%M:%S %z",
+                             gmtime(sysroot_creation_time))
+
+    # Create the json file for the sysroot image
+    sysroot_json_string = '{"file_name": "%s-%s-sysroot.tar.xz",\
+                           "architecture":"%s",\
+                           "size": %s,\
+                           "sha256": "%s",\
+                           "md5": "%s",\
+                           "created": "%s"}' % (sysroot_directory_name,
+                                                sysroot_creation_time,
+                                                target_arch,
+                                                os.path.getsize(tar_result),
+                                                sha256,
+                                                md5,
+                                                creation_time)
+    sysroot_json_data = json.loads(sysroot_json_string)
+    with open("%s-sysroot.json" % sysroot_directory, 'w') as sysroot_json_file:
+        json.dump(sysroot_json_data, sysroot_json_file, indent=4)
+    print("The sysroot's json file: %s-sysroot.json" % sysroot_directory)
+    print("Use `sudo sysroot -f %s-sysroot.json login`" % sysroot_directory +
+          " to enter the sysroot")
+
+
+if options.mode == "create" or options.mode == "umount":
+    # Remove the sysroot directory
+    try:
+        if not options.keep_sysroot:
+            # Even if the system directory umounting was done successfully it
+            # is safer to check if the /home is for sure not there under the
+            # sysroot
+            if not isdir("%s/home/%s" % (sysroot_directory,
+                                         os.environ['SUDO_USER'])):
+                rmtree(sysroot_directory.encode('utf-8'))
+    except OSError as e:
+        print(bcolors.FAIL +
+              "The %s can not be removed." % sysroot_directory +
+              bcolors.ENDC)
+        umount_and_exit(1)
