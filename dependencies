@@ -1,0 +1,30 @@
+#!/bin/bash
+touch dependencies.txt
+touch requirements.txt
+REQS=`zypper info --requires $1|sed -n -e '/Requires:/,$p'|egrep -v "Requires"|perl -p -e "s/^  ([^\(]*).*$/\1/"|sort|uniq`
+if  [ -n "$REQS" ]; then
+    while IFS= read -r REQS_LINE ; do
+        NEW_REQUIREMENT=$(grep "$REQS_LINE" requirements.txt|wc -l)
+        if [ "$NEW_REQUIREMENT" -eq 0 ]; then
+            echo "requires: $REQS_LINE"
+            echo $REQS_LINE >> requirements.txt
+            PACKAGES=`zypper wp $REQS_LINE|sed -n -e '/---/,$p'|egrep -v "\-\-\-"|sort|head -1|sed -n 's/^[^|]*| \([^|]*\)|[ ]*.*/\1/p'`
+            if [ -n "$PACKAGES" ]; then
+                while IFS= read -r PACKAGES_LINE ; do
+                    NEW_DEPENDENCY=$(grep "$PACKAGES_LINE" dependencies.txt|wc -l)
+                    if [ "$NEW_DEPENDENCY" -eq 0 ]; then
+                        echo dependency - $PACKAGES_LINE
+                        echo  $PACKAGES_LINE >> dependencies.txt
+                        dependencies ${PACKAGES_LINE}
+                    else
+                        echo Already listed dependency - $PACKAGES_LINE
+                    fi
+                done <<< "$PACKAGES"
+            else
+                echo Nothing provides - $REQS_LINE
+            fi
+        else
+             echo Already listed requirement - $REQS_LINE
+        fi
+    done <<< "$REQS"
+fi
