@@ -1,0 +1,9 @@
+[opensuse-current]
+name=openSUSE-current
+enabled=1
+autorefresh=0
+baseurl=http://download.opensuse.org/ports/armv7hl/factory/repo/oss/suse/
+type=rpm-md
+gpgcheck=0
+priority=99
+
