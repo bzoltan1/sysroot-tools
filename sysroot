@@ -310,7 +310,7 @@ def check_tool_dependencies(tools):
 
 def download_packages(repository, packages, sysroot_directory):
     try:
-        package_list_page = urllib2.urlopen(repository, timeout=10)
+        package_list_page = urllib2.urlopen(repository, timeout=100)
     except urllib2.HTTPError, err:
         if err.code == 401:
             return False, "No permission, incorect username or password."
@@ -782,7 +782,7 @@ check_tool_dependencies(["rpm2cpio",
                          "cpio",
                          "chroot",
                          "tar",
-                         "qemu-arm-static"])
+                         "qemu-arm"])
 
 epilog_text = "TEMPLATE_FILE:\n" + \
               "  In case of creating sysroot it is a json file what" + \
