@@ -125,7 +125,7 @@ def setup_authentication(url, username, password, ssl_certificate):
             context = create_default_context(purpose=Purpose.SERVER_AUTH,
                                              cafile=ssl_certificate,
                                              capath=None)
-        except:
+        except Exception:
             print("Could not create default SSL context with " +
                   bcolors.FAIL +
                   "%s" % ssl_certificate +
@@ -310,7 +310,7 @@ def check_tool_dependencies(tools):
 
 def download_packages(repository, packages, sysroot_directory):
     try:
-        package_list_page = urllib2.urlopen(repository, timeout=100)
+        package_list_page = urllib2.urlopen(repository, timeout=600)
     except urllib2.HTTPError, err:
         if err.code == 401:
             return False, "No permission, incorect username or password."
@@ -327,13 +327,24 @@ def download_packages(repository, packages, sysroot_directory):
               bcolors.ENDC +
               "\nError code: %s" % err.reason)
         return False, repository
-    repository_package_list = package_list_page.read().decode('utf-8')
+    try:
+        repository_package_list = package_list_page.read().decode('utf-8')
+    except Exception, err:
+        print("Could not read the content of " +
+              bcolors.FAIL +
+              "%s" % repository +
+              bcolors.ENDC)
+        return False, repository
+
     for package in packages:
-        package_name_match = re.search('(href=")(%s-\d[^">]+\.rpm)' %
-                                       re.escape(package),
-                                       repository_package_list)
-        if package_name_match:
-            package_name = package_name_match.group(2)
+        p_name, p_version = (package, "")
+        if ' ' in package:
+            p_name, p_version = package.split()
+        p_match = re.findall('href="(%s-%s[^">]+\.rpm)' % (re.escape(p_name),
+                                                           p_version),
+                             repository_package_list)
+        if p_match:
+            package_name = p_match[0]
             log_text("Downloading: " + bcolors.OKGREEN +
                      "%s" % package_name + bcolors.ENDC)
             try:
@@ -345,6 +356,17 @@ def download_packages(repository, packages, sysroot_directory):
                       "%s/%s" % (repository, package_name) +
                       bcolors.ENDC +
                       "\nError code: %s" % err.code)
+                log_text("Downloading: " + bcolors.OKGREEN +
+                         "%s" % package_name + bcolors.ENDC)
+                try:
+                    package_file = urllib2.urlopen("%s/%s" % (repository,
+                                                          package_name))
+                except urllib2.HTTPError, err:
+                    print("Could not open " +
+                          bcolors.FAIL +
+                          "%s/%s" % (repository, package_name) +
+                          bcolors.ENDC +
+                          "\nError code: %s" % err.code)
             except urllib2.URLError, err:
                 print("Could not open" +
                       bcolors.FAIL +
@@ -528,7 +550,8 @@ def fix_sshd_config(sshd_conf):
                               '#UsePAM yes',
                               line)
                 line = re.sub(r'^.*AuthorizedKeysCommand .*$',
-                              'AuthorizedKeysCommand /etc/ssh/authorized_keys.d/keys.sh',
+                              'AuthorizedKeysCommand' +
+                              '/etc/ssh/authorized_keys.d/keys.sh',
                               line)
                 line = re.sub(r'^.*AuthorizedKeysCommandUser .*$',
                               'AuthorizedKeysCommandUser nobody',
@@ -629,6 +652,7 @@ def update_sysroot(sysroot):
 
 def install_packages(sysroot, packages):
     for package in packages:
+        package = package.split()[0]
         log_text("Installing: " + bcolors.OKGREEN +
                  "%s" % package + bcolors.ENDC)
         zypper_install_process = subprocess.Popen(["chroot",
@@ -648,6 +672,8 @@ def install_packages(sysroot, packages):
 
 
 def remove_files(files, directory):
+    if not exists('%s' % directory):
+        return True, 0
     try:
         directory_list = os.listdir(directory)
     except OSError as e:
@@ -666,7 +692,7 @@ def remove_files(files, directory):
 def tar_sysroot(directory):
     try:
         isdir(directory)
-    except:
+    except Exception:
         return False, "Error listing directory ({0}): {1}".format(e.errno,
                                                                   e.strerror)
     sysroot_parts = os.listdir(directory)
@@ -689,11 +715,11 @@ def tar_sysroot(directory):
 def untar_sysroot(sysroot_tarfile, directory):
     try:
         isfile(sysroot_tarfile)
-    except:
+    except Exception:
         return False, "%s does not exist" % sysroot_tarfile
     try:
         isdir(directory)
-    except:
+    except Exception:
         return False, "Error listing directory ({0}): {1}".format(e.errno,
                                                                   e.strerror)
     log_text("Unpacking the %s file to %s\r" % (sysroot_tarfile, directory))
@@ -717,7 +743,7 @@ def check_valid_json_file(value):
     try:
         with open(value) as json_file:
             json.load(json_file)
-    except:
+    except Exception:
         raise argparse.ArgumentTypeError('Can not parse json file: %s' % value)
     return value
 
@@ -773,6 +799,7 @@ def make_md5_sha256(file_name):
             hash_md5.update(chunk)
     return (hash_md5.hexdigest(),
             hash_sha256.hexdigest())
+
 
 # Disable the SIGINT for safety reasons
 keyboard_interrupt = keyboard_interrupt_class()
@@ -901,11 +928,10 @@ with open(options.template_file) as json_file:
 if options.mode == "create":
     try:
         sysroot_directory_name = sysroot_data["sysroot_directory"]
-    except:
+    except Exception:
         sysroot_directory = False
         print("The " + bcolors.WARNING + "%s" % options.template_file +
               bcolors.ENDC + " is not a valid sysroot template")
-
         umount_and_exit(1)
     valid_chars = "-_.() %s%s" % (string.ascii_letters, string.digits)
     for c in sysroot_directory_name:
@@ -921,18 +947,17 @@ if options.mode == "create":
         password = sysroot_data["password"]
         if not username.strip() or not password.strip():
             raise Exception
-    except:
+    except Exception:
         print("No " + bcolors.WARNING + "username/password " + bcolors.ENDC +
               "for the repositories are set in %s" %
               options.template_file)
         password = False
         username = False
-
     try:
         ssl_certificate = sysroot_data["ssl_certificate"]
         if not ssl_certificate.strip():
             raise Exception
-    except:
+    except Exception:
         print("No " + bcolors.WARNING + "SSL certificate " + bcolors.ENDC +
               "is used in the sysroot")
         ssl_certificate = False
@@ -941,7 +966,6 @@ if options.mode == "create":
         if not (os.path.isabs(ssl_certificate)):
             ssl_certificate = "%s" % dirname(abspath(options.template_file)) +\
                               "/%s" % ssl_certificate
-
         if not isfile(ssl_certificate):
             print("SSL certificate file " +
                   bcolors.FAIL +
@@ -952,27 +976,31 @@ if options.mode == "create":
     try:
         target_arch = sysroot_data["target_arch"]
         if not target_arch.strip():
-            raise exception
-    except:
+            raise Exception
+    except Exception:
         print("target " + bcolors.warning + "architecture " + bcolors.endc +
               "is not defined in the %s" %
               options.template_file)
         target_arch = False
     try:
-        qemu_static = sysroot_data["qemu_static"]
-        if not qemu_static.strip():
+        if not isinstance(sysroot_data["qemu_static"], list):
+            qemu_static = ['%s' % sysroot_data["qemu_static"]]
+            if not qemu_static.strip():
+                raise Exception
+        else:
+            qemu_static = sysroot_data["qemu_static"]
+        if not len(qemu_static):
             raise Exception
-    except:
+    except Exception:
         print("Static " + bcolors.WARNING + "QEMU binary " + bcolors.ENDC +
               "is not defined. Emulation will not work")
         qemu_static = False
-
     try:
         project_configurations = sysroot_data["project_configurations"]
         for configuration in project_configurations:
             if not configuration.strip():
                 raise Exception
-    except:
+    except Exception:
         project_configurations = False
 
     if ssl_certificate:
@@ -981,7 +1009,7 @@ if options.mode == "create":
             for target_cert in target_certs:
                 if not target_cert.strip():
                     raise Exception
-        except:
+        except Exception:
             print("No " + bcolors.WARNING + "certificate target " +
                   bcolors.ENDC +
                   "(target_certs) is set for %s in %s" %
@@ -989,7 +1017,7 @@ if options.mode == "create":
             umount_and_exit(1)
     try:
         keep_zypp_settints = sysroot_data["keep_zypp_settints"]
-    except:
+    except Exception:
         print("No settings for keeping or not the injected zypp settings")
         keep_zypp_settints = False
 
@@ -1010,7 +1038,7 @@ if options.mode == "create":
                               key=lambda x: x['type'])
         if not repositories:
             raise Exception
-    except:
+    except Exception:
         print("No repositories defined (repositories) in %s" %
               options.template_file)
         umount_and_exit(1)
@@ -1020,7 +1048,7 @@ if options.mode == "create":
             repository_packages = repository["packages"]
             if len(repository_packages) == 0:
                 raise Exception
-        except:
+        except Exception:
             print("No " + bcolors.WARNING + "packages" + bcolors.ENDC +
                   " were defined in %s for %s repository" %
                   (options.template_file, repository))
@@ -1053,7 +1081,7 @@ if options.mode == "create":
                 if (not repository_username.strip() or
                    not repository_password.strip()):
                     raise Exception
-            except:
+            except Exception:
                 print("No " +
                       bcolors.WARNING +
                       "username/password " +
@@ -1112,7 +1140,7 @@ if options.mode == "create":
                 for zypp_repository in zypp_repos:
                     if not zypp_repository.strip():
                         raise Exception
-            except:
+            except Exception:
                 print("No " + bcolors.WARNING +
                       "zypper repositories " + bcolors.ENDC +
                       "(zypp_repos) are defined in %s" %
@@ -1123,7 +1151,7 @@ if options.mode == "create":
                 for zypp_credential in zypp_credentials:
                     if not zypp_credential.strip():
                         raise Exception
-            except:
+            except Exception:
                 print("No zypper " + bcolors.WARNING + "zypp_credentials " +
                       bcolors.ENDC +
                       "are defined in %s" %
@@ -1164,7 +1192,7 @@ if options.mode in ("mount", "umount", "login", "build"):
     except ValueError as msg:
         print("Wrong sysroot file: %s" % msg)
         umount_and_exit(1)
-    except:
+    except Exception:
         print("There is no file_name field in %s" % options.template_file)
         umount_and_exit(1)
     try:
@@ -1177,22 +1205,22 @@ if options.mode in ("mount", "umount", "login", "build"):
     except ValueError as msg:
         print("%s" % msg)
         umount_and_exit(1)
-    except:
+    except Exception:
         print("There is ne size field in %s" % options.template_file)
         umount_and_exit(1)
     try:
         sysroot_file_architecture = sysroot_data["architecture"]
-    except:
+    except Exception:
         print("There is no architecture field in %s" % options.template_file)
         umount_and_exit(1)
     try:
         sysroot_file_sha256 = sysroot_data["sha256"]
-    except:
+    except Exception:
         print("There is no sha256 field in %s" % options.template_file)
         umount_and_exit(1)
     try:
         sysroot_file_md5 = sysroot_data["md5"]
-    except:
+    except Exception:
         print("There is no md5 field in %s" % options.template_file)
         umount_and_exit(1)
     md5, sha256 = make_md5_sha256(sysroot_file_path)
@@ -1235,20 +1263,21 @@ if options.mode == "create":
     # and copy to the sysroot. Otherwise the sysroot is going to be a native
     # one without user space emulation capability.
     if options.mode == "create" and qemu_static:
-        found_qemu, qemu_static_binary = which_qemu(qemu_static)
-        if not found_qemu:
-            print(bcolors.FAIL +
-                  "No static ARM qemu found" +
-                  bcolors.ENDC)
-            umount_and_exit(1)
-        try:
-            copy(qemu_static_binary, '%s/usr/bin/' % sysroot_directory)
-        except IOError, e:
-            print("Unable to copy file." +
-                  bcolors.FAIL +
-                  " %s" % e +
-                  bcolors.ENDC)
-            umount_and_exit(1)
+        for qemu_static_instance in qemu_static:
+            found_qemu, qemu_static_binary = which_qemu(qemu_static_instance)
+            if not found_qemu:
+                print(bcolors.FAIL +
+                      "No static ARM qemu found" +
+                      bcolors.ENDC)
+                umount_and_exit(1)
+            try:
+                copy(qemu_static_binary, '%s/usr/bin/' % sysroot_directory)
+            except IOError, e:
+                print("Unable to copy file." +
+                      bcolors.FAIL +
+                      " %s" % e +
+                      bcolors.ENDC)
+                umount_and_exit(1)
     # Create the system directories in the sysroot
     if not exists('%s/proc' % sysroot_directory):
         os.makedirs('%s/proc' % sysroot_directory)
@@ -1425,7 +1454,7 @@ if options.mode == "login":
     print(bcolors.OKGREEN + "Entering the sysroot environment" + bcolors.ENDC)
     subprocess.call(["chroot",
                      "%s" % sysroot_directory,
-                     "/bin/su"])
+                     "/usr/bin/bash"])
 
 if options.mode == "build":
     if options.project_name != "":
@@ -1472,6 +1501,21 @@ if options.mode == "create":
                 print("packages: " + bcolors.FAIL +
                       " %s" % install_output + bcolors.ENDC)
                 umount_and_exit(1)
+
+        zypper_clean_process = subprocess.Popen(["chroot",
+                                                 "%s" % sysroot_directory,
+                                                 "zypper",
+                                                 "--non-interactive",
+                                                 "clean",
+                                                 "--all"],
+                                                 stdout=subprocess.PIPE,
+                                                 stderr=subprocess.PIPE)
+        stdout_value, stderr_value = zypper_clean_process.communicate()
+        if stderr_value:
+            print stdout_value.decode("utf-8")
+    log_text("The installation is done.")
+
+
     removed, remove_error = remove_files("90-nproc\.conf",
                                          "%s/etc/security/limits.d" %
                                          sysroot_directory)

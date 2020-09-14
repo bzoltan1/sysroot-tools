@@ -115,7 +115,6 @@
                     "libssh4 0.9.4",
                     "libstdc++6",
                     "libsystemd0 245.7",
-                    "libudev1",
                     "libudev1 245",
                     "libunistring2",
                     "libusb-0_1-4",
