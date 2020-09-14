@@ -1,0 +1,9 @@
+[opensuse-tw-oss]
+name=openSUSE-tw-oss
+enabled=1
+autorefresh=0
+baseurl=http://download.opensuse.org/tumbleweed/repo/oss/
+type=rpm-md
+gpgcheck=0
+priority=99
+
