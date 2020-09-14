@@ -11,6 +11,10 @@ DO NOT EVER TERMINATE THE SYSROOT CREATION.
 
 If the tool breaks or terminates for whatever reason please check with mount command if there is any mount point left in the working directory.
 
+Please note that the json file may need to be updated and adjusted as the content of the repositories change. Packages may get removed, 
+renamed and  updated. This will cause the download or installation processes fail. All failures should be graceful but if not then the 
+tool may leave artifacts and mounted system directories behind. In that case please be careful when removing directories created by this tool
+
 ## Requirements
 
 The following tools must be available on the system where the sysroot tool is used:
@@ -79,7 +83,7 @@ There is a `sysroot-template.json` what can be used to create new sysroot defini
 Description of the sysroot json file:
 
 * sysroot_directory : This is how the sysroot will be named (for example openSUSE-current-x86)
-* qemu_static: (optional) The name of the qemu binary in case the target arch is different from the host's arch
+* qemu_static: (optional) The name(s) of the qemu binary in case the target arch is different from the host's arch. Can be a single string or an array of strings.
 * target_arch : The target arch can be any arch what QEMU supports on the host system
 * ssl_certificate: SSL certificate for the package repositories if they require such
 * keep_zypp_settints: The tool can clean up or leave the zypp credentials and setting in the sysroot (boolean)
@@ -90,7 +94,7 @@ Description of the repository record
 
 * name: Unique identifier of the repository 
 * type: The repositories are either cross or native. Native repositories are used by zypper, the packages from cross repositories are directly downloaded and unpacked to a specific path on the image root
-* packages: Packages from the repository to be installed on the image
+* packages: Packages from the repository to be installed on the image. The packages may contain a version number separated by a space from the package name.
 
 For cross repositories
 * target: The absolut path on the image rootfs where the packages are unpacked
