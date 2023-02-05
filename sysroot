@@ -1382,6 +1382,10 @@ if options.mode == "create":
                   " %s" % macro_cp_error + bcolors.ENDC)
             umount_and_exit(1)
 
+    with open("%s/etc/zypp/zypp.conf" % sysroot_directory, 'a') as zypp_conf_file:
+        zypp_conf_file.write('techpreview.ZYPP_SINGLE_RPMTRANS=1\n')
+        zypp_conf_file.write('techpreview.ZYPP_MEDIANETWORK=1\n')
+
     # If the target architecture is set then configure the zypp to the target
     # architecture. Otherwise create a native sysroot what will be the same
     # architecture as the host where the sysroot is created on.
