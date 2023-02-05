@@ -5,7 +5,7 @@ Additionally it can be used to hook up the sysroot as chroot.
 
 ## Warning
 
-This tool operates with chroots. It means that essential system resources (/dev, /home, etc.) are hooked up to the working directory.
+This tool operates with chroots. It means that essential system resources (/dev, /tmp, etc.) are hooked up to the working directory.
 
 DO NOT EVER TERMINATE THE SYSROOT CREATION.
 
@@ -48,7 +48,7 @@ $ sudo sysroot login -f [sysroot json file]
 ```
 Build an rpm project in the sysroot
 ```
-$ sudo sysroot build -p [project diretcoy] -f [sysroot json file] 
+$ sudo sysroot build -p [project diretory] -f [sysroot json file] 
 ```
 
 ## Options and parameters of the sysroot tool
