@@ -50,6 +50,7 @@ import signal
 import pwd
 import grp
 from multiprocessing import cpu_count
+import shutil
 
 
 class bcolors:
@@ -92,6 +93,21 @@ def log_text(text):
         sys.stdout.write("\033[K")  # Clear to the end of line
     else:
         print(text)
+
+
+def copy_directory_contents(src_dir, dst_dir):
+    for filename in os.listdir(src_dir):
+        src_path = os.path.join(src_dir, filename)
+        dst_path = os.path.join(dst_dir, filename)
+        if os.path.isfile(src_path):
+            shutil.copy2(src_path, dst_path)
+        elif os.path.isdir(src_path):
+            try:
+                os.makedirs(dst_path)
+            except OSError as e:
+                if e.errno != errno.EEXIST:
+                    raise
+            copy_directory_contents(src_path, dst_path)
 
 
 def find_file(path, specfile):
@@ -171,7 +187,7 @@ def build_project(project_dir, build_directory, arch, sysroot_directory):
         search_result = re.search("^Version:\s+(.*)", line)
         if search_result:
             project_version = search_result.group(1)
-        search_result = re.search("^Source0:\s+(.*)", line)
+        search_result = re.search("^Source:\s+(.*)", line)
         if search_result:
             tar_file_name = search_result.group(1)
             tar_file_name = tar_file_name.replace('%{name}',
@@ -193,26 +209,9 @@ def build_project(project_dir, build_directory, arch, sysroot_directory):
                 copy(full_patch_file_name, build_directory)
 
     tmp_projectdir = tempfile.mkdtemp(prefix='sysroot-')
-    # Move and rename the source directory
-    copytree(project_dir, "/%s/%s-%s" % (tmp_projectdir,
-                                         project_name,
-                                         project_version))
-    if isfile("/%s/%s" % (tmp_projectdir, tar_file_name)):
-        os.remove("/%s/%s" % (tmp_projectdir, tar_file_name))
-    tar_process = subprocess.Popen(["tar",
-                                    "-C",
-                                    "/%s" % tmp_projectdir,
-                                    "-ScpJf",
-                                    "/%s/%s" % (tmp_projectdir, tar_file_name),
-                                    "%s-%s" % (project_name, project_version)],
-                                   stdout=subprocess.PIPE,
-                                   stderr=subprocess.PIPE)
-    stdout_value, stderr_value = tar_process.communicate()
-    if stderr_value:
-        return False, stderr_value.decode("utf-8")
-    if isfile("/%s/%s" % (tmp_projectdir, tar_file_name)):
-        move("/%s/%s" % (tmp_projectdir, tar_file_name),
-             os.path.join(build_directory, "%s" % tar_file_name))
+    # Move the source directory
+    copy_directory_contents(project_dir, build_directory)
+
     if not options.no_build_dep_check:
         rpmspec_process = subprocess.Popen(["chroot",
                                             "%s" % sysroot_directory,
@@ -264,7 +263,7 @@ def build_project(project_dir, build_directory, arch, sysroot_directory):
                      "%s" % os.environ['SUDO_USER'],
                      "-c",
                      "cd %s && " % build_directory +
-                     "MAKEFLAGS=\"-j%s\" rpmbuild -bb " % options.jobs +
+                     "MAKEFLAGS=\"-j%s\" rpmbuild -ba " % options.jobs +
                      "%s " % os.path.join(build_directory,
                                           basename(spec_filename)) +
                      " --define \"_topdir %s\"" % re.sub('SOURCES$',
@@ -335,12 +334,11 @@ def download_packages(repository, packages, sysroot_directory):
               "%s" % repository +
               bcolors.ENDC)
         return False, repository
-
     for package in packages:
         p_name, p_version = (package, "")
         if ' ' in package:
             p_name, p_version = package.split()
-        p_match = re.findall('href="(%s-%s[^">]+\.rpm)' % (re.escape(p_name),
+        p_match = re.findall(r'>(%s-%s[^"]+\.rpm)<' % (re.escape(p_name),
                                                            p_version),
                              repository_package_list)
         if p_match:
@@ -626,6 +624,7 @@ def update_sysroot(sysroot):
         if stderr_value:
             return False, stderr_value.decode("utf-8")
         lines.append(stdout_value.rstrip())
+
     zypper_refresh_process = subprocess.Popen(["chroot",
                                                "%s" % sysroot,
                                                "zypper",
@@ -652,6 +651,9 @@ def update_sysroot(sysroot):
 
 def install_packages(sysroot, packages):
     for package in packages:
+        if package == "":
+            stdout_value = ""
+            continue
         package = package.split()[0]
         log_text("Installing: " + bcolors.OKGREEN +
                  "%s" % package + bcolors.ENDC)
@@ -666,7 +668,7 @@ def install_packages(sysroot, packages):
         stdout_value, stderr_value = zypper_install_process.communicate()
         if stderr_value:
             print stdout_value.decode("utf-8")
-            return False, stderr_value.decode("utf-8")
+#            return False, stderr_value.decode("utf-8")
     log_text("The installation is done.")
     return True, stdout_value.rstrip()
 
@@ -1134,6 +1136,11 @@ if options.mode == "create":
                       " %s" % remove_error + bcolors.ENDC)
                 umount_and_exit(1)
 
+            # Link /lib and /lib64 to /usr/lib and /usr/lib64
+            os.symlink("usr/lib", "%s/lib" % sysroot_directory)
+            os.symlink("usr/lib64", "%s/lib64" % sysroot_directory)
+
+
         if repository_type == "native":
             try:
                 zypp_repos = repository["zypp_repos"]
@@ -1501,7 +1508,6 @@ if options.mode == "create":
                 print("packages: " + bcolors.FAIL +
                       " %s" % install_output + bcolors.ENDC)
                 umount_and_exit(1)
-
         zypper_clean_process = subprocess.Popen(["chroot",
                                                  "%s" % sysroot_directory,
                                                  "zypper",
@@ -1525,12 +1531,12 @@ if options.mode == "create":
         umount_and_exit(1)
 
 if options.mode in ("create", "umount", "login", "build"):
-    fixed_sshd_conf, fix_ssh_conf_error = fix_sshd_config("%s/etc/ssh/sshd_config" % sysroot_directory)
-    if not fixed_sshd_conf:
-        print("sshd configuration fix failed: " + bcolors.FAIL +
-              " %s" % fix_ssh_conf_error + bcolors.ENDC)
-        umount_and_exit(1)
-    # raw_input('Press enter to continue: ')
+#    FIXME is there is no sshd
+#    fixed_sshd_conf, fix_ssh_conf_error = fix_sshd_config("%s/etc/ssh/sshd_config" % sysroot_directory)
+#    if not fixed_sshd_conf:
+#        print("sshd configuration fix failed: " + bcolors.FAIL +
+#             " %s" % fix_ssh_conf_error + bcolors.ENDC)
+#       umount_and_exit(1)
     if isdir(sysroot_directory):
         # Clean up and decouple the ready sysroot from the host machine
 
