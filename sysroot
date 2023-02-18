@@ -117,6 +117,12 @@ def find_file(path, specfile):
                 return True, abspath("%s/%s" % (path, file))
     return False, ""
 
+def find_binary(path, file_name):
+    for root, dirs, files in os.walk(path):
+        for file in files:
+            if file == file_name:
+                return os.path.join(root, file)
+    return None
 
 def umount_and_exit(return_value):
     # Starting with umounting the system directories
@@ -232,6 +238,9 @@ def build_project(project_dir, build_directory, arch, sysroot_directory):
                 zypper_wp_process = subprocess.Popen(["chroot",
                                                       "%s" % sysroot_directory,
                                                       "zypper",
+                                                      "--non-interactive",
+                                                      "--no-gpg-checks",
+                                                      "--gpg-auto-import-keys",
                                                       "wp",
                                                       "%s" % dependency],
                                                      stdout=subprocess.PIPE,
@@ -628,6 +637,9 @@ def update_sysroot(sysroot):
     zypper_refresh_process = subprocess.Popen(["chroot",
                                                "%s" % sysroot,
                                                "zypper",
+                                               "--non-interactive",
+                                               "--no-gpg-checks",
+                                               "--gpg-auto-import-keys",
                                                "refresh"],
                                               stdout=subprocess.PIPE,
                                               stderr=subprocess.PIPE)
@@ -638,6 +650,7 @@ def update_sysroot(sysroot):
     zypper_dup_process = subprocess.Popen(["chroot",
                                            "%s" % sysroot,
                                            "zypper",
+                                           "--no-gpg-checks",
                                            "--non-interactive",
                                            "dup"],
                                           stdout=subprocess.PIPE,
@@ -660,15 +673,18 @@ def install_packages(sysroot, packages):
         zypper_install_process = subprocess.Popen(["chroot",
                                                    "%s" % sysroot,
                                                    "zypper",
+                                                   "--no-gpg-checks",
                                                    "--non-interactive",
                                                    "install",
+                                                   "--auto-agree-with-licenses",
                                                    "%s" % package],
                                                   stdout=subprocess.PIPE,
                                                   stderr=subprocess.PIPE)
         stdout_value, stderr_value = zypper_install_process.communicate()
         if stderr_value:
-            print stdout_value.decode("utf-8")
-#            return False, stderr_value.decode("utf-8")
+            print(stdout_value.decode("utf-8"))
+            print("Error: %s " % stdout_value)
+            return False, stderr_value.decode("utf-8")
     log_text("The installation is done.")
     return True, stdout_value.rstrip()
 
@@ -1121,6 +1137,7 @@ if options.mode == "create":
             unpacked, failed = unpack_rpm_packags("%s/%s"
                                                   % (sysroot_directory,
                                                      repository_target))
+
             if not unpacked:
                 print("Could not unpack " +
                       bcolors.FAIL +
@@ -1137,8 +1154,10 @@ if options.mode == "create":
                 umount_and_exit(1)
 
             # Link /lib and /lib64 to /usr/lib and /usr/lib64
-            os.symlink("usr/lib", "%s/lib" % sysroot_directory)
-            os.symlink("usr/lib64", "%s/lib64" % sysroot_directory)
+            if os.path.exists("%s/usr/lib64" % sysroot_directory) and not os.path.exists("%s/lib" % sysroot_directory):
+                os.symlink("usr/lib", "%s/lib" % sysroot_directory)
+            if os.path.exists("%s/usr/lib64" % sysroot_directory) and not os.path.exists("%s/lib64" % sysroot_directory):
+                os.symlink("usr/lib64", "%s/lib64" % sysroot_directory)
 
 
         if repository_type == "native":
@@ -1462,10 +1481,11 @@ if options.mode == "mount":
     print("Use `sudo chroot %s` to enter the sysroot" % sysroot_directory)
 
 if options.mode == "login":
+    bash_path = re.sub(sysroot_directory, '', find_binary(sysroot_directory,"bash"))
     print(bcolors.OKGREEN + "Entering the sysroot environment" + bcolors.ENDC)
     subprocess.call(["chroot",
                      "%s" % sysroot_directory,
-                     "/usr/bin/bash"])
+                     "%s" % bash_path])
 
 if options.mode == "build":
     if options.project_name != "":
