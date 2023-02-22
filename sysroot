@@ -307,7 +307,7 @@ def check_tool_dependencies(tools):
                                             stderr=subprocess.PIPE)
             stdout_value, stderr_value = tool_process.communicate()
         except OSError as e:
-            if e.errno == os.errno.ENOENT:
+            if e.errno == errno.ENOENT:
                 print("The " +
                       bcolors.FAIL +
                       "%s" % tool +
