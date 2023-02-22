@@ -340,7 +340,7 @@ def download_packages(repository_url, repository_name, mirror_url, packages, sys
 #        req = urllib.request("%s/%s" % (repository_url, repository_name))
 #        req.add_header('User-agent', 'Mozilla 5.10')
         package_list_page = urlopen("%s/%s" % (repository_url, repository_name), timeout=600)
-    except timeout:
+    except socket.timeout:
          return False, "Timed out - %s" % repository
 
     except urllib.error.HTTPError as e:
