@@ -532,7 +532,7 @@ def install_repos(repos, target):
             repo = "%s/%s" % (dirname(abspath(options.template_file)), repo)
         try:
             copy(repo, target)
-        except IOError(e):
+        except IOError as e:
             return False, e
     return True, 0
 
