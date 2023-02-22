@@ -318,7 +318,8 @@ def check_tool_dependencies(tools):
             else:
                 print("Something went wrong while trying to run `%s`" % tool)
     if missing_dependencies:
-        umount_and_exit(1)
+        sys.exit(1)
+#        umount_and_exit(1)
 
 
 def open_file(url, attempts):
