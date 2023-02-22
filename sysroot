@@ -382,10 +382,9 @@ def download_packages(repository_url, repository_name, mirror_url, packages, sys
                         print(bcolors.FAIL +
                               "%s/%s/%s" % (repository_url, repository_name, package_name) +
                               bcolors.ENDC +
-                              " timeout. (%s)" % attempts)
+                              " Timeout. (%s)" % attempts)
                     else:
-                        print("Could not open " +
-                              bcolors.FAIL +
+                        print(bcolors.FAIL +
                               "%s/%s/%s" % (repository_url, repository_name, package_name) +
                               bcolors.ENDC +
                               " Failed (%s)" % attempts + " Error code: %s" % error)
@@ -979,8 +978,7 @@ if options.mode == "create":
             raise Exception
     except Exception:
         print("No " + bcolors.WARNING + "username/password " + bcolors.ENDC +
-              "for the repositories are set in %s" %
-              options.template_file)
+              " are set in %s" % options.template_file)
         password = False
         username = False
     try:
@@ -1102,12 +1100,13 @@ if options.mode == "create":
             try:
                 mirror_url = repository["mirror"]
             except Exception:
-                print("No " +               
-                      bcolors.WARNING +
-                      "mirror URL " +
-                      bcolors.ENDC +
-                      "for the repositories are set in %s" %
-                      options.template_file)
+                # Fallback to mirror is not yet implemented
+                #print("No " +               
+                #      bcolors.WARNING +
+                #      "mirror URL " +
+                #     bcolors.ENDC +
+                #      "for %s " % repository["name"] +
+                #      "are set in %s" % options.template_file)
                 mirror_url = False
 
             repository_target = repository["target"]
@@ -1199,7 +1198,9 @@ if options.mode == "create":
             except Exception:
                 print("No " + bcolors.WARNING +
                       "zypper repositories " + bcolors.ENDC +
-                      "(zypp_repos) are defined in %s" %
+                      "(zypp_repos) are defined " + 
+                      " for %s" +  
+                      " in %s" %
                       options.template_file)
                 umount_and_exit(1)
             try:
@@ -1210,8 +1211,9 @@ if options.mode == "create":
             except Exception:
                 print("No zypper " + bcolors.WARNING + "zypp_credentials " +
                       bcolors.ENDC +
-                      "are defined in %s" %
-                      options.template_file)
+                      "are defined " +
+                      "for %s " % repository["name"] +
+                      " in %s" % options.template_file)
                 zypp_credentials = False
 
             # Copy the zypp repositories to the sysroot
