@@ -17,6 +17,7 @@
 # Author: Zoltán Balogh <zoltan@bakter.hu>
 
 import urllib2
+import socket
 from ssl import create_default_context
 from ssl import Purpose
 from urlparse import urlparse
@@ -316,9 +317,26 @@ def check_tool_dependencies(tools):
         umount_and_exit(1)
 
 
-def download_packages(repository, packages, sysroot_directory):
+def open_file(url, attempts):
     try:
-        package_list_page = urllib2.urlopen(repository, timeout=600)
+        package_file = urllib2.urlopen(url, timeout= 5)
+    except socket.timeout:
+        return False, 0, None
+    except urllib2.HTTPError, err:
+        return False, err.code, None
+    except urllib2.URLError, err:
+        return False, err.reason, None
+    return True, 0, package_file
+
+
+def download_packages(repository_url, repository_name, mirror_url, packages, sysroot_directory):
+    try:
+        req = urllib2.Request("%s/%s" % (repository_url, repository_name))
+        req.add_header('User-agent', 'Mozilla 5.10')
+        package_list_page = urllib2.urlopen(req, timeout=600)
+    except timeout:
+         return False, "Timed out - %s" % repository
+
     except urllib2.HTTPError, err:
         if err.code == 401:
             return False, "No permission, incorect username or password."
@@ -326,14 +344,14 @@ def download_packages(repository, packages, sysroot_directory):
               bcolors.FAIL +
               "%s" % (repository) +
               bcolors.ENDC +
-              "\nError code: %s" % err.code)
+              " Error code: %s" % err.code)
         return False, repository
     except urllib2.URLError, err:
         print("Could not connect " +
               bcolors.FAIL +
               "%s" % repository +
               bcolors.ENDC +
-              "\nError code: %s" % err.reason)
+              " Error code: %s" % err.reason)
         return False, repository
     try:
         repository_package_list = package_list_page.read().decode('utf-8')
@@ -354,38 +372,32 @@ def download_packages(repository, packages, sysroot_directory):
             package_name = p_match[0]
             log_text("Downloading: " + bcolors.OKGREEN +
                      "%s" % package_name + bcolors.ENDC)
-            try:
-                package_file = urllib2.urlopen("%s/%s" % (repository,
-                                                          package_name))
-            except urllib2.HTTPError, err:
-                print("Could not open " +
-                      bcolors.FAIL +
-                      "%s/%s" % (repository, package_name) +
-                      bcolors.ENDC +
-                      "\nError code: %s" % err.code)
-                log_text("Downloading: " + bcolors.OKGREEN +
-                         "%s" % package_name + bcolors.ENDC)
-                try:
-                    package_file = urllib2.urlopen("%s/%s" % (repository,
-                                                          package_name))
-                except urllib2.HTTPError, err:
-                    print("Could not open " +
-                          bcolors.FAIL +
-                          "%s/%s" % (repository, package_name) +
-                          bcolors.ENDC +
-                          "\nError code: %s" % err.code)
-            except urllib2.URLError, err:
-                print("Could not open" +
-                      bcolors.FAIL +
-                      "%s/%s" % (repository, package_name) +
-                      bcolors.ENDC +
-                      "\nError code: %s" % err.reason)
-            package_data = package_file.read()
-            if not os.path.exists(sysroot_directory):
-                os.makedirs(sysroot_directory)
-            with open("%s/%s" % (sysroot_directory,
-                                 package_name), "wb") as code:
-                code.write(package_data)
+            opened = False
+            attempts = 0
+            while not opened and attempts < 10:
+                opened, error, package_file = open_file("%s/%s/%s" % (repository_url, repository_name, package_name), attempts)
+                if not opened:
+                    attempts += 1
+                    if error == 0:
+                        print(bcolors.FAIL +
+                              "%s/%s/%s" % (repository_url, repository_name, package_name) +
+                              bcolors.ENDC +
+                              " timeout. (%s)" % attempts)
+                    else:
+                        print("Could not open " +
+                              bcolors.FAIL +
+                              "%s/%s/%s" % (repository_url, repository_name, package_name) +
+                              bcolors.ENDC +
+                              " Failed (%s)" % attempts + " Error code: %s" % error)
+            if opened:
+                package_data = package_file.read()
+                    
+                if not os.path.exists(sysroot_directory):
+                    os.makedirs(sysroot_directory)
+                with open("%s/%s" % (sysroot_directory, package_name), "wb") as code:
+                    code.write(package_data)
+            else:
+                return False, package
         else:
             return False, package
     return True, 0
@@ -1087,6 +1099,17 @@ if options.mode == "create":
         # cross or native
         if repository_type == "cross":
             repository_url = repository["url"]
+            try:
+                mirror_url = repository["mirror"]
+            except Exception:
+                print("No " +               
+                      bcolors.WARNING +
+                      "mirror URL " +
+                      bcolors.ENDC +
+                      "for the repositories are set in %s" %
+                      options.template_file)
+                mirror_url = False
+
             repository_target = repository["target"]
             repository_name = repository["repository"]
             try:
@@ -1104,8 +1127,9 @@ if options.mode == "create":
                       bcolors.WARNING +
                       "username/password " +
                       bcolors.ENDC +
-                      "for the repositories are set in %s" %
-                      options.template_file)
+                      "for the repositories " +
+                      "%s " % repository["name"] +
+                      "are set in %s" % options.template_file)
                 repository_password = False
                 repository_username = False
             if repository_username:
@@ -1116,10 +1140,16 @@ if options.mode == "create":
                                      repository_username,
                                      repository_password,
                                      ssl_certificate)
+                if mirror_url:
+                    setup_authentication(mirror_url,
+                                         repository_username,
+                                         repository_password,
+                                         ssl_certificate)
+
             # Download the available rpm file for the listed packages
-            downloaded, failed = download_packages("%s/%s"
-                                                   % (repository_url,
-                                                      repository_name),
+            downloaded, failed = download_packages(repository_url,
+                                                   repository_name,
+                                                   mirror_url,
                                                    repository_packages,
                                                    "%s/%s"
                                                    % (sysroot_directory,
