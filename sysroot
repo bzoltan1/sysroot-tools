@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # Copyright 2017 Zoltán Balogh.
 #
@@ -16,11 +16,15 @@
 #
 # Author: Zoltán Balogh <zoltan@bakter.hu>
 
-import urllib2
+import urllib
+import urllib.request
+from urllib.request import urlopen
+from urllib.request import HTTPError
+from urllib.request import URLError
+import urllib.parse
 import socket
 from ssl import create_default_context
 from ssl import Purpose
-from urlparse import urlparse
 import subprocess
 import os
 import tempfile
@@ -139,9 +143,9 @@ def umount_and_exit(return_value):
 
 
 def setup_authentication(url, username, password, ssl_certificate):
-    passman = urllib2.HTTPPasswordMgrWithDefaultRealm()
+    passman = urllib.request.HTTPPasswordMgrWithDefaultRealm()
     passman.add_password(realm=None, uri=url, user=username, passwd=password)
-    authhandler = urllib2.HTTPBasicAuthHandler(passman)
+    authhandler = urllib.request.HTTPBasicAuthHandler(passman)
     context = None
     if ssl_certificate:
         try:
@@ -154,9 +158,9 @@ def setup_authentication(url, username, password, ssl_certificate):
                   "%s" % ssl_certificate +
                   bcolors.ENDC)
             return False
-    https_handler = urllib2.HTTPSHandler(context=context)
-    opener = urllib2.build_opener(https_handler, authhandler)
-    urllib2.install_opener(opener)
+    https_handler = urllib.request.HTTPSHandler(context=context)
+    opener = urllib.request.build_opener(https_handler, authhandler)
+    urllib.request.install_opener(opener)
     return True
 
 
@@ -256,7 +260,7 @@ def build_project(project_dir, build_directory, arch, sysroot_directory):
                         dependencies[index] = package_match.group(1)
                         break
         # Install the build dependencies to the sysroot
-        updated_sysroot, update_return = update_sysroot(sysroot_directory)
+        updated_sysroot, update_return = update_sysroot("%s" % sysroot_directory)
         if not updated_sysroot:
             return False, "Updating the sysroot is failed: %s" % update_return
         installed, install_output = install_packages("%s" % sysroot_directory,
@@ -318,44 +322,45 @@ def check_tool_dependencies(tools):
 
 
 def open_file(url, attempts):
+    print(url)
     try:
-        package_file = urllib2.urlopen(url, timeout= 5)
-    except socket.timeout:
+        package_file = urllib.request.urlopen(url, timeout=5)
+        return True, 0, package_file
+    except urllib.error.HTTPError as e:
+        return False, e.reason, None
+    except urllib.error.URLError as e:
+        return False, e.reason, None
+    except socket.timeout as e:
         return False, 0, None
-    except urllib2.HTTPError, err:
-        return False, err.code, None
-    except urllib2.URLError, err:
-        return False, err.reason, None
-    return True, 0, package_file
 
 
 def download_packages(repository_url, repository_name, mirror_url, packages, sysroot_directory):
     try:
-        req = urllib2.Request("%s/%s" % (repository_url, repository_name))
-        req.add_header('User-agent', 'Mozilla 5.10')
-        package_list_page = urllib2.urlopen(req, timeout=600)
+#        req = urllib.request("%s/%s" % (repository_url, repository_name))
+#        req.add_header('User-agent', 'Mozilla 5.10')
+        package_list_page = urlopen("%s/%s" % (repository_url, repository_name), timeout=600)
     except timeout:
          return False, "Timed out - %s" % repository
 
-    except urllib2.HTTPError, err:
+    except urllib.error.HTTPError as e:
         if err.code == 401:
             return False, "No permission, incorect username or password."
         print("Could not connect to " +
               bcolors.FAIL +
               "%s" % (repository) +
               bcolors.ENDC +
-              " Error code: %s" % err.code)
+              " Error code: %s" % e.code)
         return False, repository
-    except urllib2.URLError, err:
+    except urllib.error.URLError as e:
         print("Could not connect " +
               bcolors.FAIL +
               "%s" % repository +
               bcolors.ENDC +
-              " Error code: %s" % err.reason)
+              " Error code: %s" % e.reason)
         return False, repository
     try:
         repository_package_list = package_list_page.read().decode('utf-8')
-    except Exception, err:
+    except Exception(err):
         print("Could not read the content of " +
               bcolors.FAIL +
               "%s" % repository +
@@ -422,11 +427,11 @@ def unpack_rpm_packags(sysroot_directory):
                                                     '-i', '-d'),
                                                    stdin=rpm2cpio.stdout,
                                                    stderr=subprocess.PIPE)
-                except subprocess.CalledProcessError, e:
+                except subprocess.CalledProcessError(e):
                     os.chdir(orig_dir)
                     return False, "cpio failed %s" % e.output
                 rpm2cpio.wait()
-            except subprocess.CalledProcessError, e:
+            except subprocess.CalledProcessError(e):
                 os.chdir(orig_dir)
                 return False, "rpm2cpio failed: %s" % e.output
             continue
@@ -471,7 +476,7 @@ def umount_system_dir(sysroot_directory):
     if stderr_value:
         return False, "mount failed: %s" % stderr_value.decode("utf-8")
     for line in sorted(stdout_value.splitlines()):
-        if sysroot_directory in line:
+        if sysroot_directory.encode() in line:
             umount_process = subprocess.Popen(["umount",
                                                "-l",
                                                "%s" % line.split()[2]],
@@ -488,14 +493,14 @@ def install_macros(macros, target):
         if urlparse(macro).netloc:
             setup_authentication(macro, username, password, ssl_certificate)
             try:
-                configuration_page = urllib2.urlopen(macro, timeout=10)
-            except urllib2.HTTPError, err:
+                configuration_page = urlopen(macro, timeout=10)
+            except HTTPError(err):
                 if err.code == 401:
                     return False, "No permission, incorect" +\
                                   " username or password."
                 return False, "Could not connect to " +\
                               "%s" % macro + "\nError code: %s" % err.code
-            except urllib2.URLError, err:
+            except URLError(err):
                 return Flase, "Could not connect " +\
                               "%s" % macro + "\nError code: %s" % err.reason
             configuration_data = configuration_page.read().decode('utf-8')
@@ -515,7 +520,7 @@ def install_macros(macros, target):
         else:
             try:
                 copy(macro, target)
-            except IOError, e:
+            except IOError(e):
                 return False, "%s Could not be copied - %s" % (macro, e)
     return True, 0
 
@@ -526,7 +531,7 @@ def install_repos(repos, target):
             repo = "%s/%s" % (dirname(abspath(options.template_file)), repo)
         try:
             copy(repo, target)
-        except IOError, e:
+        except IOError(e):
             return False, e
     return True, 0
 
@@ -604,7 +609,7 @@ def copy_credentials(credentials, target):
 
         try:
             copy(credential, target)
-        except IOError, e:
+        except IOError(e):
             return False, "Error({0}): {1}".format(e.errno, e.strerror)
     return True, 0
 
@@ -627,7 +632,7 @@ def install_cert(certificate, target, sysroot_directory):
 def copy_conf(conf, target):
     try:
         copy(conf, target)
-    except IOError, e:
+    except IOError(e):
         return False, "Error({0}): {1}".format(e.errno, e.strerror)
     return True, 0
 
@@ -669,7 +674,10 @@ def update_sysroot(sysroot):
     stdout_value, stderr_value = zypper_dup_process.communicate()
     if stderr_value:
         return False, stderr_value.decode("utf-8")
-    lines.append(stdout_value.rstrip())
+#    lines.append(stdout_value.rstrip())
+    lines.append(stdout_value.rstrip().decode("utf-8"))
+
+#    lines.append(stdout_value.decode('utf-8').rstrip())
     return True, ''.join(lines)
 
 
@@ -736,7 +744,7 @@ def tar_sysroot(directory):
                                    stderr=subprocess.PIPE)
     stdout_value, stderr_value = tar_process.communicate()
     if stderr_value:
-        print stdout_value.decode("utf-8")
+        print(stdout_value.decode("utf-8"))
         return False, stderr_value.decode("utf-8")
     return True, "%s-sysroot.tar.xz" % directory
 
@@ -761,7 +769,7 @@ def untar_sysroot(sysroot_tarfile, directory):
                                      stderr=subprocess.PIPE)
     stdout_value, stderr_value = untar_process.communicate()
     if stderr_value:
-        print stdout_value.decode("utf-8")
+        print(stdout_value.decode("utf-8"))
         return False, stderr_value.decode("utf-8")
     return True, 0
 
@@ -1330,7 +1338,7 @@ if options.mode == "create":
                 umount_and_exit(1)
             try:
                 copy(qemu_static_binary, '%s/usr/bin/' % sysroot_directory)
-            except IOError, e:
+            except IOError(e):
                 print("Unable to copy file." +
                       bcolors.FAIL +
                       " %s" % e +
@@ -1574,7 +1582,7 @@ if options.mode == "create":
                                                  stderr=subprocess.PIPE)
         stdout_value, stderr_value = zypper_clean_process.communicate()
         if stderr_value:
-            print stdout_value.decode("utf-8")
+            print(stdout_value.decode("utf-8"))
     log_text("The installation is done.")
 
 
