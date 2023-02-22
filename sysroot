@@ -649,8 +649,7 @@ def update_sysroot(sysroot):
         stdout_value, stderr_value = multi_c_rehash_process.communicate()
         if stderr_value:
             return False, stderr_value.decode("utf-8")
-        lines.append(stdout_value.rstrip())
-
+        lines.append(stdout_value.rstrip().decode("utf-8"))
     zypper_refresh_process = subprocess.Popen(["chroot",
                                                "%s" % sysroot,
                                                "zypper",
@@ -663,7 +662,7 @@ def update_sysroot(sysroot):
     stdout_value, stderr_value = zypper_refresh_process.communicate()
     if stderr_value:
         return False, stderr_value.decode("utf-8")
-    lines.append(stdout_value.rstrip())
+    lines.append(stdout_value.rstrip().decode("utf-8"))
     zypper_dup_process = subprocess.Popen(["chroot",
                                            "%s" % sysroot,
                                            "zypper",
@@ -675,10 +674,7 @@ def update_sysroot(sysroot):
     stdout_value, stderr_value = zypper_dup_process.communicate()
     if stderr_value:
         return False, stderr_value.decode("utf-8")
-#    lines.append(stdout_value.rstrip())
     lines.append(stdout_value.rstrip().decode("utf-8"))
-
-#    lines.append(stdout_value.decode('utf-8').rstrip())
     return True, ''.join(lines)
 
 
