@@ -846,8 +846,9 @@ keyboard_interrupt.disable()
 check_tool_dependencies(["rpm2cpio",
                          "cpio",
                          "chroot",
-                         "tar",
-                         "qemu-arm"])
+                         "tar"#,
+                        # "qemu-arm"
+                        ])
 
 epilog_text = "TEMPLATE_FILE:\n" + \
               "  In case of creating sysroot it is a json file what" + \
