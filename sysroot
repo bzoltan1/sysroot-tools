@@ -393,7 +393,14 @@ def download_packages(repository_url, repository_name, mirror_url, packages, sys
                               BColors.ENDC +
                               " Failed (%s)" % attempts + " Error code: %s" % error)
             if opened:
-                package_data = package_file.read()
+                try:
+                    package_data = package_file.read()
+                except urllib.error.HTTPError as e:
+                    return False, package
+                except urllib.error.URLError as e:
+                    return False, package
+                except socket.timeout:
+                    return False, package
                 if not os.path.exists(sysroot_directory):
                     os.makedirs(sysroot_directory)
                 with open("%s/%s" % (sysroot_directory, package_name), "wb") as code:
