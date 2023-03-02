@@ -1,4 +1,5 @@
 {
+    "_comment:": "This is a template for SUSE Linux Enterprise, and itt will not work outside of the SUSE internal engineering network",
     "sysroot_directory":"sles15-sp5",
     "target_arch":"x86_64",
     "qemu_static":"",
