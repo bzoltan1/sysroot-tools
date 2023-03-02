@@ -1,0 +1,7 @@
+[sle-we:12-SP5::pool]
+name=sle-we:12-SP5::pool
+enabled=1
+autorefresh=0
+baseurl=http://download.suse.de/ibs/SUSE/Products/SLE-WE/12-SP5/x86_64/product/
+type=rpm-md
+keeppackages=1

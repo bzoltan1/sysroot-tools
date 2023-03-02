@@ -1,0 +1,6 @@
+[sle-we:15-SP4::pool]
+name=sle-we:15-SP4::pool
+enabled=1
+autorefresh=0
+baseurl=http://download.suse.de/ibs/SUSE/Products/SLE-Product-WE/15-SP4/x86_64/product/
+keeppackages=1

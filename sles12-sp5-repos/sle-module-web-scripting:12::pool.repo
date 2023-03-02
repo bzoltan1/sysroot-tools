@@ -1,0 +1,7 @@
+[sle-module-web-scripting:12::pool]
+name=sle-module-web-scripting:12::pool
+enabled=1
+autorefresh=0
+baseurl=http://download.suse.de/ibs/SUSE/Products/SLE-Module-Web-Scripting/12/x86_64/product/
+type=rpm-md
+keeppackages=1

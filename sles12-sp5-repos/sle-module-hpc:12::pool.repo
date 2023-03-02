@@ -1,0 +1,7 @@
+[sle-module-hpc:12::pool]
+name=sle-module-hpc:12::pool
+enabled=1
+autorefresh=0
+baseurl=http://download.suse.de/ibs/SUSE/Products/SLE-Module-HPC/12/x86_64/product/
+type=rpm-md
+keeppackages=1

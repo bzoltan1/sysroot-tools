@@ -1,0 +1,7 @@
+[sle-module-adv-systems-management:12::pool]
+name=sle-module-adv-systems-management:12::pool
+enabled=1
+autorefresh=0
+baseurl=http://download.suse.de/ibs/SUSE/Products/SLE-Module-Adv-Systems-Management/12/x86_64/product/
+type=rpm-md
+keeppackages=1

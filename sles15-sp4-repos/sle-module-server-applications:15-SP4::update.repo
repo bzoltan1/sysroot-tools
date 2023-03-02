@@ -1,0 +1,6 @@
+[sle-module-server-applications:15-SP4::update]
+name=sle-module-server-applications:15-SP4::update
+enabled=1
+autorefresh=1
+baseurl=http://download.suse.de/ibs/SUSE/Updates/SLE-Module-Server-Applications/15-SP4/x86_64/update/
+keeppackages=1

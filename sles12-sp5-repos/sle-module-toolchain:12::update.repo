@@ -1,0 +1,7 @@
+[sle-module-toolchain:12::update]
+name=sle-module-toolchain:12::update
+enabled=1
+autorefresh=1
+baseurl=http://download.suse.de/ibs/SUSE/Updates/SLE-Module-Toolchain/12/x86_64/update/
+type=rpm-md
+keeppackages=1

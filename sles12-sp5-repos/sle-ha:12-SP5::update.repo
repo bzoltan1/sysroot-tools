@@ -1,0 +1,7 @@
+[sle-ha:12-SP5::update]
+name=sle-ha:12-SP5::update
+enabled=1
+autorefresh=1
+baseurl=http://download.suse.de/ibs/SUSE/Updates/SLE-HA/12-SP5/x86_64/update/
+type=rpm-md
+keeppackages=1

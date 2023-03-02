@@ -1,0 +1,6 @@
+[sle-we:15-SP4::update]
+name=sle-we:15-SP4::update
+enabled=1
+autorefresh=1
+baseurl=http://download.suse.de/ibs/SUSE/Updates/SLE-Product-WE/15-SP4/x86_64/update/
+keeppackages=1

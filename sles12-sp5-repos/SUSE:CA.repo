@@ -1,0 +1,7 @@
+[SUSE_CA]
+name=SUSE Internal CA Certificate (SLE_12_SP5)
+type=rpm-md
+baseurl=http://download.suse.de/ibs/SUSE:/CA/SLE_12_SP5/
+gpgcheck=1
+gpgkey=http://download.suse.de/ibs/SUSE:/CA/SLE_12_SP5/repodata/repomd.xml.key
+enabled=1
