@@ -1,0 +1,6 @@
+[sle-module-desktop-applications:15-SP4::update]
+name=sle-module-desktop-applications:15-SP4::update
+enabled=1
+autorefresh=1
+baseurl=http://download.suse.de/ibs/SUSE/Updates/SLE-Module-Desktop-Applications/15-SP4/aarch64/update/
+keeppackages=1

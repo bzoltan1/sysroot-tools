@@ -1333,7 +1333,7 @@ if options.mode == "create":
                       BColors.ENDC)
                 umount_and_exit(1)
             try:
-                copy(qemu_static_binary, '%s/usr/bin/' % sysroot_directory)
+                copy(qemu_static_binary, b'%s/usr/bin/' % sysroot_directory.encode())
             except IOError as e:
                 print("Unable to copy file." +
                       BColors.FAIL +
