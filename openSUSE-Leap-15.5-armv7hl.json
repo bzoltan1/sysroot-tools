@@ -142,15 +142,11 @@
                     "sed",
                     "shadow",
                     "suse-module-tools",
-                    "systemd",
-                    "sysvinit-tools",
-                    "terminfo-base",
-                    "udev",
                     "update-alternatives",
                     "util-linux",
                     "xz",
-		    "libverto1","systemd","libopenssl1_0_0","libp11-kit0","libmpfr6","libip4tc2","libfdisk1","libdevmapper1_03","libopenssl1_0_0","libblogger2","libffi8",
-                    "zypper", "strace"
+		    "libverto1","libopenssl1_0_0","libp11-kit0","libmpfr6","libip4tc2","libfdisk1","libdevmapper1_03","libopenssl1_0_0","libblogger2","libffi8",
+                    "zypper"
                 ]
         },
         {
