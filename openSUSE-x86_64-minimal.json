@@ -79,7 +79,7 @@
             "name": "noarch_repository",
             "type" : "native",
             "zypp_repos" : [
-                "openSUSE-x86_64.repo"],
+                "openSUSE-TW-x86_64.repo"],
             "zypp_credentials" : [
                 "",
                 ""],
