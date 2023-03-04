@@ -1,0 +1,9 @@
+[opensuse-current]
+name=openSUSE-current
+enabled=1
+autorefresh=0
+baseurl=http://download.opensuse.org/ports/armv7hl/distribution/leap/15.5/repo/oss/
+type=rpm-md
+gpgcheck=0
+priority=99
+
