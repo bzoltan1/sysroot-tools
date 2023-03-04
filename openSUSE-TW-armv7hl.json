@@ -1,5 +1,5 @@
 {
-    "sysroot_directory" : "opensuse",
+    "sysroot_directory" : "opensuse-tw",
     "target_arch" : "armv7hl",
     "qemu_static" : ["qemu-arm"
                     ],
@@ -172,7 +172,7 @@
             "name": "sdk",
             "type": "native",
             "zypp_repos" : [
-                "openSUSE-armv7hl.repo"],
+                "openSUSE-TW-armv7hl.repo"],
             "zypp_credentials" : [
                 "",
                 ""],
