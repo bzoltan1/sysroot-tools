@@ -706,6 +706,8 @@ def install_packages(sysroot, packages):
             print(stdout_value.decode("utf-8"))
             print("Error: %s " % stdout_value)
             return False, stderr_value.decode("utf-8")
+        # Uncomment the following line to log all output
+        # log_text(stdout_value.decode("utf-8"))
     log_text("The installation is done.")
     return True, stdout_value.rstrip()
 
