@@ -11,7 +11,7 @@
                 "",
                 ""],
     "repositories" : [
-        {
+	{
             "name": "root_repository",
             "type": "cross",
             "target" : "/",
@@ -19,9 +19,9 @@
 	    "mirror": "http://mirror.linux-schulserver.de/opensuse/",
             "repository" : "/tumbleweed/repo/oss/x86_64/",
             "packages": [
-                    "bash",
-                    "glibc",
+ 		    "glibc",
                     "krb5",
+		    "bash",
                     "libacl1",
                     "libassuan0",
                     "libaugeas0",
