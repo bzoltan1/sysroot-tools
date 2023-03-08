@@ -473,6 +473,10 @@ def mount_system_dir(directory, option, parameter, sysroot_directory):
     return True, 0
 
 
+def mount_point(elem):
+    return(elem.split()[2])
+
+
 def umount_system_dir(sysroot_directory):
     mount_process = subprocess.Popen(["mount"],
                                      stdout=subprocess.PIPE,
@@ -480,7 +484,7 @@ def umount_system_dir(sysroot_directory):
     stdout_value, stderr_value = mount_process.communicate()
     if stderr_value:
         return False, "mount failed: %s" % stderr_value.decode("utf-8")
-    for line in sorted(stdout_value.decode("utf-8").splitlines(), reverse=True):
+    for line in sorted(stdout_value.decode("utf-8").splitlines(), key=mount_point, reverse=True):
         if sysroot_directory in line:
             umount_process = subprocess.Popen(["umount",
                                                "-l",
@@ -697,6 +701,7 @@ def install_packages(sysroot, packages):
                                                    "--no-gpg-checks",
                                                    "--non-interactive",
                                                    "install",
+                                                   "--no-recommends",
                                                    "--auto-agree-with-licenses",
                                                    "%s" % package],
                                                   stdout=subprocess.PIPE,
