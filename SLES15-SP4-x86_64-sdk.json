@@ -18,7 +18,7 @@
             "target":"/",
             "mirror":"http://mirror.suse.cz",
             "url":"http://download.suse.de",
-            "repository":"/download/ibs/SUSE/Products/SLE-Module-Basesystem/15-SP5/x86_64/product/noarch/",
+            "repository":"/download/ibs/SUSE/Products/SLE-Module-Basesystem/15-SP4/x86_64/product/noarch/",
             "packages":[
                 "ca-certificates"
             ]
@@ -40,7 +40,7 @@
             "target":"/",
             "url":"http://download.suse.de",
             "mirror":"http://mirror.suse.cz",
-            "repository":"/download/ibs/SUSE/Products/SLE-Module-Development-Tools/15-SP5/x86_64/product/x86_64/",
+            "repository":"/download/ibs/SUSE/Products/SLE-Module-Development-Tools/15-SP4/x86_64/product/x86_64/",
             "packages":[
                 "gcc-locale",
                 "rpm-build"
@@ -93,7 +93,7 @@
             "target":"/",
             "url":"http://download.suse.de",
             "mirror":"http://mirror.suse.cz",
-            "repository":"/download/ibs/SUSE/Products/SLE-Module-Basesystem/15-SP5/x86_64/product/x86_64/",
+            "repository":"/download/ibs/SUSE/Products/SLE-Module-Basesystem/15-SP4/x86_64/product/x86_64/",
             "packages":[
                     "bash",
                     "gpg2",
@@ -120,7 +120,6 @@
                     "libgpg-error0",
                     "libgpgme11",
                     "libidn2-0",
-                    "libjitterentropy3",
                     "libkeyutils1",
                     "libldap-2_4-2",
                     "liblua5_3-5",
@@ -159,7 +158,7 @@
             "target" : "/",
             "url":"http://download.suse.de",
             "mirror":"http://mirror.suse.cz",
-            "repository":"/download/ibs/SUSE/Products/SLE-Module-Basesystem/15-SP5/x86_64/product/x86_64/",
+            "repository":"/download/ibs/SUSE/Products/SLE-Module-Basesystem/15-SP4/x86_64/product/x86_64/",
             "packages": [
                     "coreutils",
 		    "gawk",
