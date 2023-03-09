@@ -1,0 +1,6 @@
+[qa:15-SP4::pool]
+name=qa:15-SP4::pool
+enabled=1
+autorefresh=1
+baseurl=http://download.suse.de/ibs/QA:/SLE15SP4/update/
+keeppackages=1

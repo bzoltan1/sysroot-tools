@@ -1,0 +1,6 @@
+[SLES:15-SP4::update]
+name=SLES:15-SP4::update
+enabled=1
+autorefresh=1
+baseurl=http://download.suse.de/ibs/SUSE/Updates/SLE-Product-SLES/15-SP4/s390x/update/
+keeppackages=1

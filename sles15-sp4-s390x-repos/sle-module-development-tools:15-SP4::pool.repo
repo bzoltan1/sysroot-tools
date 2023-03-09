@@ -1,0 +1,6 @@
+[sle-module-development-tools:15-SP4::pool]
+name=sle-module-development-tools:15-SP4::pool
+enabled=1
+autorefresh=0
+baseurl=http://download.suse.de/ibs/SUSE/Products/SLE-Module-Development-Tools/15-SP4/s390x/product/
+keeppackages=1
